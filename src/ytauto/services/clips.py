@@ -189,6 +189,86 @@ def import_folder(
     return imported
 
 
+def extract_clips(
+    video_path: Path,
+    timestamps: list[tuple[str, str]],
+    clips_dir: Path | None = None,
+    tags: list[str] | None = None,
+    source_name: str = "local",
+) -> list[dict]:
+    """Extract multiple short clips from a long video file.
+
+    Args:
+        video_path: Path to the source video (movie episode, etc.).
+        timestamps: List of (start, end) tuples as "HH:MM:SS" or "MM:SS" strings.
+        clips_dir: Output directory. Defaults to ~/.ytauto/clips/.
+        tags: Tags for all extracted clips.
+        source_name: Label for the source (e.g., "Suits S01E01").
+
+    Returns:
+        List of clip metadata dicts.
+    """
+    clips_dir = clips_dir or get_clips_dir()
+    index = _load_index(clips_dir)
+    extracted: list[dict] = []
+
+    video_title = video_path.stem
+
+    for i, (start, end) in enumerate(timestamps):
+        clip_id = uuid.uuid4().hex[:10]
+        clip_name = f"{clip_id}_{video_title[:30]}_clip{i + 1:02d}.mp4"
+        output = clips_dir / clip_name
+
+        result = subprocess.run(
+            [
+                "ffmpeg", "-y",
+                "-ss", start,
+                "-to", end,
+                "-i", str(video_path),
+                "-c:v", "libx264", "-crf", "20", "-preset", "fast",
+                "-c:a", "aac", "-b:a", "128k",
+                "-pix_fmt", "yuv420p",
+                str(output),
+            ],
+            capture_output=True, text=True, timeout=120,
+        )
+
+        if result.returncode != 0:
+            logger.warning("Failed to extract clip %d: %s", i + 1, result.stderr[:200])
+            continue
+
+        # Get duration
+        duration = 0
+        try:
+            probe = subprocess.run(
+                [
+                    "ffprobe", "-v", "error",
+                    "-show_entries", "format=duration",
+                    "-of", "default=noprint_wrappers=1:nokey=1",
+                    str(output),
+                ],
+                capture_output=True, text=True, timeout=10,
+            )
+            duration = float(probe.stdout.strip())
+        except Exception:
+            pass
+
+        meta = {
+            "id": clip_id,
+            "file": clip_name,
+            "title": f"{source_name} clip {i + 1}",
+            "source": source_name,
+            "source_url": str(video_path),
+            "duration": duration,
+            "tags": tags or [],
+        }
+        index.append(meta)
+        extracted.append(meta)
+
+    _save_index(clips_dir, index)
+    return extracted
+
+
 def list_clips(clips_dir: Path | None = None, tag: str | None = None) -> list[dict]:
     """List all clips in the library, optionally filtered by tag."""
     clips_dir = clips_dir or get_clips_dir()

@@ -104,7 +104,7 @@ from ytauto.cli.channel import channels, channel_add, channel_show  # noqa: E402
 from ytauto.cli.open_cmd import open_video, delete_job  # noqa: E402
 from ytauto.cli.batch import batch  # noqa: E402
 from ytauto.cli.shorts import shorts  # noqa: E402
-from ytauto.cli.clips import clips_add, clips_import, clips_list, clips_delete  # noqa: E402
+from ytauto.cli.clips import clips_add, clips_import, clips_list, clips_delete, clips_extract  # noqa: E402
 
 app.command()(create)
 app.command()(doctor)
@@ -127,6 +127,7 @@ app.command(name="clips-add")(clips_add)
 app.command(name="clips-import")(clips_import)
 app.command(name="clips-list")(clips_list)
 app.command(name="clips-delete")(clips_delete)
+app.command(name="clips-extract")(clips_extract)
 
 
 def run() -> None:

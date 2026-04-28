@@ -175,3 +175,84 @@ def clips_delete(
 
     delete_clip(clip_id)
     success(f"Clip [id]{clip_id}[/id] deleted.\n")
+
+
+def clips_extract(
+    video: str = typer.Argument(help="Path to source video (movie, episode, etc.)."),
+    source_name: str = typer.Option(
+        "", "--source", "-s",
+        help="Source label (e.g., 'Suits S01E01', 'Wolf of Wall Street').",
+    ),
+    tags: str = typer.Option(
+        "", "--tags", "-t",
+        help="Comma-separated tags for all extracted clips.",
+    ),
+) -> None:
+    """Extract multiple clips from a movie/episode file interactively.
+
+    Prompts you to enter start/end timestamps for each clip you want to extract.
+    Great for pulling scenes from Netflix downloads, movie files, etc.
+
+    Example timestamps: 00:05:30 to 00:05:50 (20 second clip)
+    """
+    from ytauto.services.clips import extract_clips
+
+    video_path = Path(video).expanduser().resolve()
+    if not video_path.exists():
+        error(f"File not found: {video}")
+        raise typer.Exit(1)
+
+    source = source_name or video_path.stem
+    tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else []
+
+    console.print()
+    console.print(header("Clip Extraction", f"Source: {source}\nFile: {video_path.name}"))
+    console.print()
+    console.print("  [dim]Enter start and end timestamps for each clip.[/dim]")
+    console.print("  [dim]Format: MM:SS or HH:MM:SS. Type 'done' when finished.[/dim]\n")
+
+    timestamps: list[tuple[str, str]] = []
+    clip_num = 1
+
+    while True:
+        console.print(f"  [accent]Clip {clip_num}:[/accent]")
+        start = typer.prompt("    Start time (or 'done')", default="done")
+        if start.lower() == "done":
+            break
+        end = typer.prompt("    End time")
+        timestamps.append((start, end))
+        clip_num += 1
+        console.print()
+
+    if not timestamps:
+        console.print("  [dim]No clips to extract.[/dim]\n")
+        return
+
+    console.print()
+    with spinner(f"Extracting {len(timestamps)} clips..."):
+        extracted = extract_clips(
+            video_path=video_path,
+            timestamps=timestamps,
+            tags=tag_list,
+            source_name=source,
+        )
+
+    if not extracted:
+        error("No clips were extracted successfully.")
+        raise typer.Exit(1)
+
+    table = styled_table(f"Extracted {len(extracted)} Clips")
+    table.add_column("ID", style="id", min_width=12)
+    table.add_column("Title", min_width=25)
+    table.add_column("Duration", min_width=10)
+
+    for clip in extracted:
+        table.add_row(
+            clip["id"],
+            clip["title"],
+            f"{clip['duration']:.0f}s",
+        )
+
+    console.print(table)
+    console.print()
+    success(f"{len(extracted)} clips added to library.\n")
