@@ -58,13 +58,21 @@ def doctor() -> None:
     if settings.has_openai():
         success("OpenAI API key configured")
     else:
-        warning("OpenAI API key not set (needed for TTS and image generation)")
+        warning("OpenAI API key not set (needed for image generation)")
+        issues += 1
+
+    if settings.has_deepgram():
+        success(f"Deepgram API key configured [dim](default TTS provider)[/dim]")
+    else:
+        warning("Deepgram API key not set (primary TTS provider)")
         issues += 1
 
     if settings.has_elevenlabs():
         success("ElevenLabs API key configured")
     else:
-        console.print("  [dim]\u2022 ElevenLabs API key not set (optional — premium voices)[/dim]")
+        console.print("  [dim]\u2022 ElevenLabs API key not set (optional \u2014 premium voices)[/dim]")
+
+    console.print(f"\n  [dim]TTS provider: {settings.default_tts_provider}  |  Voice: {settings.default_tts_voice}[/dim]")
 
     # Data directory
     console.print()

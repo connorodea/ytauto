@@ -142,19 +142,28 @@ def create(
         dur_choice = typer.prompt("  Duration [1/2/3]", default="2")
         duration = {"1": "short", "2": "medium", "3": "long"}.get(dur_choice, "medium")
 
-        # Interactive voice selection
-        voices = ["alloy", "echo", "fable", "onyx", "nova", "shimmer"]
+        # Interactive voice selection — Deepgram Aura voices
+        dg_voices = [
+            ("aura-orion-en", "Orion \u2014 male, deep & authoritative"),
+            ("aura-arcas-en", "Arcas \u2014 male, warm & engaging"),
+            ("aura-perseus-en", "Perseus \u2014 male, confident"),
+            ("aura-zeus-en", "Zeus \u2014 male, powerful"),
+            ("aura-asteria-en", "Asteria \u2014 female, warm"),
+            ("aura-luna-en", "Luna \u2014 female, soft"),
+            ("aura-stella-en", "Stella \u2014 female, bright"),
+            ("aura-athena-en", "Athena \u2014 female, professional"),
+        ]
         console.print()
-        console.print("  [dim]Voice options:[/dim]")
-        for i, v in enumerate(voices, 1):
-            marker = " [accent](default)[/accent]" if v == "onyx" else ""
-            console.print(f"    [accent]{i}.[/accent] {v}{marker}")
+        console.print("  [dim]Deepgram Aura voices:[/dim]")
+        for i, (vid, desc) in enumerate(dg_voices, 1):
+            marker = " [accent](default)[/accent]" if vid == "aura-orion-en" else ""
+            console.print(f"    [accent]{i}.[/accent] {desc}{marker}")
         console.print()
-        voice_choice = typer.prompt("  Voice [1-6]", default="4")
+        voice_choice = typer.prompt("  Voice [1-8]", default="1")
         try:
-            voice = voices[int(voice_choice) - 1]
+            voice = dg_voices[int(voice_choice) - 1][0]
         except (ValueError, IndexError):
-            voice = "onyx"
+            voice = "aura-orion-en"
 
         console.print()
 

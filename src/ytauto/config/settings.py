@@ -22,12 +22,13 @@ class Settings(BaseSettings):
     openai_api_key: SecretStr = SecretStr("")
 
     # --- TTS ---
+    deepgram_api_key: SecretStr = SecretStr("")
     elevenlabs_api_key: SecretStr = SecretStr("")
 
     # --- Defaults ---
     default_llm_provider: Literal["claude", "openai"] = "claude"
-    default_tts_provider: Literal["openai", "elevenlabs"] = "openai"
-    default_tts_voice: str = "onyx"
+    default_tts_provider: Literal["deepgram", "openai", "elevenlabs"] = "deepgram"
+    default_tts_voice: str = "aura-orion-en"
     default_image_provider: Literal["dalle"] = "dalle"
 
     # --- Video Defaults ---
@@ -61,6 +62,9 @@ class Settings(BaseSettings):
 
     def has_openai(self) -> bool:
         return bool(self.openai_api_key.get_secret_value())
+
+    def has_deepgram(self) -> bool:
+        return bool(self.deepgram_api_key.get_secret_value())
 
     def has_elevenlabs(self) -> bool:
         return bool(self.elevenlabs_api_key.get_secret_value())
