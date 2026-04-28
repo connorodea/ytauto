@@ -177,6 +177,92 @@ def clips_delete(
     success(f"Clip [id]{clip_id}[/id] deleted.\n")
 
 
+def clips_rip(
+    url: str = typer.Argument(help="YouTube URL to download and rip clips from."),
+    tags: str = typer.Option(
+        "", "--tags", "-t",
+        help="Comma-separated tags for extracted clips (e.g., 'suits,business').",
+    ),
+    scene_threshold: float = typer.Option(
+        0.3, "--threshold",
+        help="Scene detection sensitivity (0.0-1.0, lower=more cuts).",
+    ),
+    keep_audio: bool = typer.Option(
+        False, "--keep-audio",
+        help="Keep audio track (default: strips voiceover/music).",
+    ),
+    min_duration: float = typer.Option(
+        2.0, "--min-dur",
+        help="Skip clips shorter than this (seconds).",
+    ),
+) -> None:
+    """Download a video and rip clean movie/TV clips from it.
+
+    Downloads the video, strips the voiceover/music/text overlay audio,
+    detects scene cuts, and saves each individual movie clip to your library.
+
+    Perfect for extracting Suits/movie footage from motivational channels.
+
+    Example:
+        ytauto clips-rip "https://youtube.com/shorts/..." --tags suits,business
+    """
+    from ytauto.services.cliprip import rip_clips
+    from ytauto.services.clips import get_clips_dir
+
+    tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else []
+    clips_dir = get_clips_dir()
+
+    console.print()
+    console.print(header("Ripping Clips", f"Source: {url}"))
+    console.print()
+    console.print("  [dim]This will:[/dim]")
+    console.print("    [accent]1.[/accent] Download the video")
+    console.print("    [accent]2.[/accent] Strip voiceover/music audio" if not keep_audio else "    [accent]2.[/accent] Keep audio track")
+    console.print("    [accent]3.[/accent] Detect scene cuts (hard cuts between clips)")
+    console.print("    [accent]4.[/accent] Save each clean clip to your library")
+    console.print()
+
+    try:
+        with spinner("Downloading and splitting into clips..."):
+            clips = rip_clips(
+                url=url,
+                clips_dir=clips_dir,
+                tags=tag_list,
+                min_clip_duration=min_duration,
+                scene_threshold=scene_threshold,
+                strip_audio=not keep_audio,
+            )
+    except Exception as exc:
+        error(str(exc))
+        raise typer.Exit(1)
+
+    if not clips:
+        warning("No clips extracted. Try lowering --threshold (e.g., 0.2) for more sensitivity.")
+        return
+
+    table = styled_table(f"Ripped {len(clips)} Clean Clips")
+    table.add_column("#", style=f"bold {ACCENT}", width=3)
+    table.add_column("ID", style="id", min_width=12)
+    table.add_column("Duration", min_width=10)
+    table.add_column("Tags", min_width=15)
+
+    for i, clip in enumerate(clips, 1):
+        table.add_row(
+            str(i),
+            clip["id"],
+            f"{clip['duration']:.1f}s",
+            ", ".join(clip.get("tags", [])) or "-",
+        )
+
+    console.print(table)
+    console.print()
+    success(f"{len(clips)} clean clips saved to library!")
+    console.print(f"  [dim]Use them:[/dim] [accent]ytauto shorts \"topic\" --clips library[/accent]")
+    if tag_list:
+        console.print(f"  [dim]Filter:[/dim]  [accent]ytauto shorts \"topic\" --clips library --clip-tag {tag_list[0]}[/accent]")
+    console.print()
+
+
 def clips_extract(
     video: str = typer.Argument(help="Path to source video (movie, episode, etc.)."),
     source_name: str = typer.Option(
