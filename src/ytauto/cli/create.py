@@ -98,6 +98,18 @@ def create(
         None, "--engine", "-e",
         help="LLM engine: claude or openai.",
     ),
+    channel: str = typer.Option(
+        None, "--channel", "-c",
+        help="Channel profile ID (use 'ytauto channels' to list).",
+    ),
+    music: str = typer.Option(
+        None, "--music", "-m",
+        help="Path to background music MP3 file.",
+    ),
+    open_after: bool = typer.Option(
+        False, "--open",
+        help="Open the video in your default player after creation.",
+    ),
     dry_run: bool = typer.Option(
         False, "--dry-run",
         help="Show the pipeline plan without executing.",
@@ -149,6 +161,31 @@ def create(
     voice = voice or settings.default_tts_voice
     engine = engine or settings.default_llm_provider
 
+    # Load channel profile if specified
+    channel_context = None
+    if channel:
+        from ytauto.models.channel import ChannelProfile
+        channels_dir = settings.data_dir / "channels"
+        ch_store = JsonDirectoryStore[ChannelProfile](channels_dir, ChannelProfile)
+        try:
+            profile = ch_store.get(channel)
+            channel_context = profile.to_prompt_context()
+            voice = voice or profile.voice_profile
+        except FileNotFoundError:
+            from ytauto.cli.theme import warning
+            warning(f"Channel profile '{channel}' not found. Using defaults.")
+
+    # Validate music path
+    music_path = None
+    if music:
+        from pathlib import Path as P
+        mp = P(music).expanduser().resolve()
+        if mp.exists():
+            music_path = mp
+        else:
+            from ytauto.cli.theme import warning
+            warning(f"Music file not found: {music}. Proceeding without background music.")
+
     # Create job
     job = Job(topic=topic, duration_config=duration, voice_config=voice, engine_config=engine)
     work_dir = settings.workspaces_dir / job.id
@@ -161,14 +198,15 @@ def create(
     job_store.save(job)
 
     # Header
+    extras = f"Duration: {duration}  \u2502  Voice: {voice}  \u2502  Engine: {engine}"
+    if channel and channel_context:
+        extras += f"  \u2502  Channel: {channel}"
+    if music_path:
+        extras += f"  \u2502  Music: \u2713"
+    extras += f"  \u2502  Job: {job.id}"
+
     console.print()
-    console.print(
-        header(
-            "Creating Video",
-            f'"{topic}"\n'
-            f'Duration: {duration}  \u2502  Voice: {voice}  \u2502  Engine: {engine}  \u2502  Job: {job.id}',
-        )
-    )
+    console.print(header("Creating Video", f'"{topic}"\n{extras}'))
     console.print()
 
     if dry_run:
@@ -183,6 +221,8 @@ def create(
     ctx = PipelineContext(
         job_id=job.id, topic=topic, work_dir=work_dir,
         duration=duration, voice=voice, engine=engine,
+        channel_id=channel, channel_context=channel_context,
+        music_path=music_path,
     )
 
     # Run pipeline with live stage display
@@ -264,4 +304,15 @@ def create(
     console.print()
     success("Your video is ready!")
     console.print(f"  [dim]View details:[/dim]  [accent]ytauto job {job.id}[/accent]")
-    console.print(f"  [dim]Open video:[/dim]   [accent]open \"{ctx.final_video_path}\"[/accent]\n")
+    console.print(f"  [dim]Upload:[/dim]        [accent]ytauto upload {job.id}[/accent]")
+    console.print(f"  [dim]Open video:[/dim]   [accent]ytauto open {job.id}[/accent]\n")
+
+    # Auto-open if requested
+    if open_after and ctx.final_video_path and ctx.final_video_path.exists():
+        import platform
+        import subprocess as sp
+        system = platform.system()
+        if system == "Darwin":
+            sp.Popen(["open", str(ctx.final_video_path)])
+        elif system == "Linux":
+            sp.Popen(["xdg-open", str(ctx.final_video_path)])

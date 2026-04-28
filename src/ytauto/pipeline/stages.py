@@ -26,6 +26,7 @@ def stage_script_generation(ctx: PipelineContext, settings: Settings) -> None:
         duration=ctx.duration,
         engine=ctx.engine,
         settings=settings,
+        channel_context=ctx.channel_context,
     )
     ctx.script = script
 
@@ -147,6 +148,7 @@ def stage_video_assembly(ctx: PipelineContext, settings: Settings) -> None:
         voiceover_path=ctx.voiceover_path,
         output_path=output_path,
         settings=settings,
+        background_music_path=ctx.music_path,
     )
     ctx.final_video_path = output_path
 

@@ -99,6 +99,9 @@ from ytauto.cli.script import script  # noqa: E402
 from ytauto.cli.setup import setup  # noqa: E402
 from ytauto.cli.voiceover import voiceover  # noqa: E402
 from ytauto.cli.render import render  # noqa: E402
+from ytauto.cli.upload import upload  # noqa: E402
+from ytauto.cli.channel import channels, channel_add, channel_show  # noqa: E402
+from ytauto.cli.open_cmd import open_video, delete_job  # noqa: E402
 
 app.command()(create)
 app.command()(doctor)
@@ -109,6 +112,12 @@ app.command()(script)
 app.command()(setup)
 app.command()(voiceover)
 app.command()(render)
+app.command()(upload)
+app.command()(channels)
+app.command(name="channel-add")(channel_add)
+app.command(name="channel-show")(channel_show)
+app.command(name="open")(open_video)
+app.command(name="delete")(delete_job)
 
 
 def run() -> None:

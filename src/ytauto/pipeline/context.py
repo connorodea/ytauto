@@ -17,6 +17,9 @@ class PipelineContext:
     duration: str = "medium"
     voice: str = "onyx"
     engine: str = "claude"
+    channel_id: str | None = None
+    channel_context: str | None = None
+    music_path: Path | None = None
 
     # Accumulated outputs
     script: dict | None = None

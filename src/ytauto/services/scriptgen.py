@@ -84,8 +84,13 @@ def generate_script(
     duration: str = "medium",
     engine: str = "claude",
     settings: Settings | None = None,
+    channel_context: str | None = None,
 ) -> dict:
     """Generate a video script using AI.
+
+    Args:
+        channel_context: Optional channel profile context to inject into the prompt
+            for brand-consistent voice and style.
 
     Returns a dict with: title, hook, sections, outro, description, tags.
     """
@@ -98,6 +103,9 @@ def generate_script(
     user_prompt = USER_PROMPT_TEMPLATE.format(
         topic=topic, minutes=minutes, words=words, sections=sections
     )
+
+    if channel_context:
+        user_prompt += f"\n\nChannel context (match this brand voice):\n{channel_context}"
 
     if engine == "claude" and settings.has_anthropic():
         return _generate_claude(user_prompt, settings)
