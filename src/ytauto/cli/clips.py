@@ -342,3 +342,150 @@ def clips_extract(
     console.print(table)
     console.print()
     success(f"{len(extracted)} clips added to library.\n")
+
+
+def clips_shows() -> None:
+    """Browse curated shows available for clip sourcing.
+
+    Lists TV shows and movies with clean scene compilations on YouTube
+    that are perfect for faceless Shorts content.
+    """
+    from ytauto.services.showlib import list_shows
+
+    shows = list_shows()
+
+    console.print()
+    table = styled_table(f"Available Shows ({len(shows)})")
+    table.add_column("#", style=f"bold {ACCENT}", width=3)
+    table.add_column("ID", style="id", min_width=18)
+    table.add_column("Show", min_width=22)
+    table.add_column("Genre", min_width=20)
+    table.add_column("Vibe", min_width=30)
+
+    for i, show in enumerate(shows, 1):
+        table.add_row(
+            str(i),
+            show["id"],
+            show["name"],
+            show.get("genre", "")[:18],
+            show.get("vibe", "")[:28],
+        )
+
+    console.print(table)
+    console.print()
+    console.print("  [dim]Search for clips:[/dim]  [accent]ytauto clips-search suits[/accent]")
+    console.print("  [dim]Bulk download:[/dim]    [accent]ytauto clips-bulk suits[/accent]\n")
+
+
+def clips_search(
+    show: str = typer.Argument(help="Show ID (e.g., 'suits', 'peaky-blinders'). See 'clips-shows' for list."),
+    count: int = typer.Option(5, "--count", "-n", help="Max results."),
+) -> None:
+    """Search YouTube for clean scene compilations of a show."""
+    from ytauto.services.showlib import search_show_videos, SHOW_CATALOG
+
+    if show not in SHOW_CATALOG:
+        error(f"Unknown show: {show}")
+        console.print(f"  [dim]Available: {', '.join(SHOW_CATALOG.keys())}[/dim]\n")
+        raise typer.Exit(1)
+
+    show_info = SHOW_CATALOG[show]
+
+    console.print()
+    console.print(header(f"Searching: {show_info['name']}", show_info.get("vibe", "")))
+    console.print()
+
+    with spinner(f"Searching YouTube for {show_info['name']} compilations..."):
+        results = search_show_videos(show, max_results=count)
+
+    if not results:
+        warning("No results found.")
+        return
+
+    table = styled_table(f"Found {len(results)} Compilations")
+    table.add_column("#", style=f"bold {ACCENT}", width=3)
+    table.add_column("Title", min_width=40)
+    table.add_column("Channel", min_width=18)
+    table.add_column("Duration", min_width=8)
+    table.add_column("Views", min_width=10, justify="right")
+
+    for i, v in enumerate(results, 1):
+        views_str = f"{v['views']:,}" if v['views'] else "?"
+        table.add_row(
+            str(i),
+            v["title"][:38],
+            v["channel"][:16],
+            f"{v['duration'] // 60}m",
+            views_str,
+        )
+
+    console.print(table)
+    console.print()
+    console.print("  [dim]Rip clips from a video:[/dim]")
+    console.print(f"  [accent]ytauto clips-rip \"{results[0]['url']}\" --tags {show}[/accent]\n")
+    console.print("  [dim]Or bulk-download all:[/dim]")
+    console.print(f"  [accent]ytauto clips-bulk {show}[/accent]\n")
+
+
+def clips_bulk(
+    show: str = typer.Argument(help="Show ID (e.g., 'suits', 'breaking-bad')."),
+    max_videos: int = typer.Option(3, "--max", "-n", help="Max videos to download and rip."),
+    scene_threshold: float = typer.Option(0.3, "--threshold", help="Scene detection sensitivity."),
+) -> None:
+    """Bulk download and rip clean clips from a show's YouTube compilations.
+
+    Searches for the best scene compilations, downloads them, strips audio,
+    splits into individual clips, and saves everything to your library.
+    """
+    from ytauto.services.showlib import search_show_videos, SHOW_CATALOG
+    from ytauto.services.cliprip import rip_clips
+    from ytauto.services.clips import get_clips_dir
+
+    if show not in SHOW_CATALOG:
+        error(f"Unknown show: {show}")
+        console.print(f"  [dim]Available: {', '.join(SHOW_CATALOG.keys())}[/dim]\n")
+        raise typer.Exit(1)
+
+    show_info = SHOW_CATALOG[show]
+    clips_dir = get_clips_dir()
+
+    console.print()
+    console.print(header(
+        f"Bulk Ripping: {show_info['name']}",
+        f"Downloading up to {max_videos} compilations, extracting clean clips",
+    ))
+    console.print()
+
+    with spinner(f"Searching YouTube for {show_info['name']}..."):
+        videos = search_show_videos(show, max_results=max_videos)
+
+    if not videos:
+        error("No compilations found.")
+        raise typer.Exit(1)
+
+    console.print(f"  [dim]Found {len(videos)} compilations. Starting rip...[/dim]\n")
+
+    total_clips = 0
+    for i, video in enumerate(videos, 1):
+        console.print(f"  [accent]━━━ Video {i}/{len(videos)} ━━━[/accent]")
+        console.print(f"  [bold bright_white]{video['title'][:60]}[/bold bright_white]")
+        console.print(f"  [dim]{video['channel']} | {video['duration'] // 60}m | {video['views']:,} views[/dim]\n")
+
+        try:
+            with spinner(f"Downloading and ripping ({video['duration'] // 60}m video)..."):
+                clips = rip_clips(
+                    url=video["url"],
+                    clips_dir=clips_dir,
+                    tags=[show, show_info.get("genre", "").split(",")[0].strip()],
+                    scene_threshold=scene_threshold,
+                )
+            success(f"{len(clips)} clips extracted")
+            total_clips += len(clips)
+        except Exception as exc:
+            warning(f"Failed: {str(exc)[:100]}")
+
+        console.print()
+
+    console.print()
+    success(f"Bulk rip complete! {total_clips} total clips from {len(videos)} videos.")
+    console.print(f"  [dim]Use them:[/dim] [accent]ytauto shorts \"topic\" --clips library --clip-tag {show}[/accent]\n")
