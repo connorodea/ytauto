@@ -5,7 +5,7 @@ from __future__ import annotations
 import typer
 
 from ytauto import __version__
-from ytauto.cli.theme import LOGO, TAGLINE, console
+from ytauto.cli.theme import LOGO, TAGLINE, console, ACCENT, header
 
 app = typer.Typer(
     name="ytauto",
@@ -30,16 +30,62 @@ def main(
         help="Show version and exit.",
     ),
 ) -> None:
-    """ytauto — AI-powered YouTube video creation."""
+    """ytauto \u2014 AI-powered YouTube video creation."""
     if ctx.invoked_subcommand is None:
-        console.print(LOGO)
-        console.print(f"  {TAGLINE}")
-        console.print(f"  Version [accent]{__version__}[/accent]\n")
-        console.print("  [dim]Quick start:[/dim]")
-        console.print('    [accent]ytauto create[/accent] "Your video topic here"')
-        console.print("    [accent]ytauto doctor[/accent]   — check your setup")
-        console.print("    [accent]ytauto setup[/accent]    — configure API keys")
-        console.print("    [accent]ytauto --help[/accent]   — all commands\n")
+        _interactive_menu()
+
+
+def _interactive_menu() -> None:
+    """Show a branded interactive menu when no command is given."""
+    console.print(LOGO)
+    console.print(f"  {TAGLINE}")
+    console.print(f"  Version [accent]{__version__}[/accent]\n")
+
+    choices = [
+        ("1", "Create a new video", "create"),
+        ("2", "Generate a script only", "script"),
+        ("3", "View all jobs", "jobs"),
+        ("4", "Check environment", "doctor"),
+        ("5", "Configure API keys", "setup"),
+        ("6", "Exit", None),
+    ]
+
+    console.print("  [bold bright_white]What would you like to do?[/bold bright_white]\n")
+    for key, label, _ in choices:
+        console.print(f"    [accent]{key}.[/accent] {label}")
+    console.print()
+
+    choice = typer.prompt("  Choice [1-6]", default="1")
+
+    selected = None
+    for key, label, cmd in choices:
+        if choice == key:
+            selected = cmd
+            break
+
+    if selected is None:
+        console.print("\n  [dim]Goodbye![/dim]\n")
+        raise typer.Exit()
+
+    console.print()
+
+    if selected == "create":
+        from ytauto.cli.create import create
+        ctx = typer.Context(typer.main.get_command(app))
+        create(topic=None)
+    elif selected == "script":
+        topic = typer.prompt("  Topic")
+        from ytauto.cli.script import script
+        script(topic=topic)
+    elif selected == "jobs":
+        from ytauto.cli.jobs import jobs
+        jobs()
+    elif selected == "doctor":
+        from ytauto.cli.doctor import doctor
+        doctor()
+    elif selected == "setup":
+        from ytauto.cli.setup import setup
+        setup()
 
 
 # ---------------------------------------------------------------------------

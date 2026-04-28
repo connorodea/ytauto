@@ -7,10 +7,10 @@ from pathlib import Path
 import typer
 
 from ytauto.cli.theme import (
+    ACCENT,
     console,
     error,
     header,
-    kv,
     pipeline_progress,
     result_panel,
     status_badge,
@@ -25,7 +25,12 @@ from ytauto.pipeline.stages import STAGE_REGISTRY
 from ytauto.store.json_store import JsonDirectoryStore
 
 
-def jobs() -> None:
+def jobs(
+    interactive: bool = typer.Option(
+        False, "--interactive", "-i",
+        help="Interactively select a job to view details.",
+    ),
+) -> None:
     """List all video creation jobs."""
     settings = get_settings()
     settings.ensure_directories()
@@ -35,21 +40,27 @@ def jobs() -> None:
 
     console.print()
     if not all_jobs:
-        console.print('  [dim]No jobs yet. Create one with:[/dim] [accent]ytauto create "topic"[/accent]\n')
+        console.print(
+            '  [dim]No jobs yet. Create one with:[/dim]'
+            ' [accent]ytauto create "topic"[/accent]\n'
+        )
         return
 
     table = styled_table("Jobs")
+    table.add_column("#", style=f"bold {ACCENT}", width=3)
     table.add_column("ID", style="id", min_width=16)
     table.add_column("Topic", min_width=30)
-    table.add_column("Status", min_width=12)
+    table.add_column("Status", min_width=14)
     table.add_column("Duration", min_width=10)
     table.add_column("Created", min_width=18)
 
-    for j in all_jobs:
+    for idx, j in enumerate(all_jobs, 1):
         created = j.created_at.strftime("%Y-%m-%d %H:%M")
+        topic_display = j.topic[:40] + ("\u2026" if len(j.topic) > 40 else "")
         table.add_row(
+            str(idx),
             j.id,
-            j.topic[:40] + ("..." if len(j.topic) > 40 else ""),
+            topic_display,
             status_badge(j.status.value),
             j.duration_config,
             created,
@@ -57,6 +68,22 @@ def jobs() -> None:
 
     console.print(table)
     console.print()
+
+    # Interactive selection
+    if interactive or typer.confirm("  View a job's details?", default=False):
+        choice = typer.prompt(
+            f"  Job # [1-{len(all_jobs)}]",
+            default="1",
+        )
+        try:
+            idx = int(choice) - 1
+            if 0 <= idx < len(all_jobs):
+                job(all_jobs[idx].id)
+            else:
+                error(f"Invalid selection: {choice}")
+        except ValueError:
+            # Try as job ID
+            job(choice)
 
 
 def job(
@@ -74,6 +101,8 @@ def job(
         raise typer.Exit(1)
 
     console.print()
+
+    # Main details panel
     rows = [
         ("Job ID", f"[id]{j.id}[/id]"),
         ("Topic", j.topic),
@@ -91,30 +120,70 @@ def job(
         rows.append(("Video", f"[path]{j.video_path}[/path]"))
     if j.thumbnail_path:
         rows.append(("Thumbnail", f"[path]{j.thumbnail_path}[/path]"))
+
+    status = "success" if j.status == JobStatus.completed else "error" if j.status == JobStatus.failed else "warning"
+    console.print(result_panel("Job Details", rows, status=status))
+
+    # Show error if present
     if j.error:
-        rows.append(("Error", f"[error]{j.error}[/error]"))
+        console.print(f"\n  [error]\u2717 Error:[/error] [dim]{j.error}[/dim]")
 
-    console.print(result_panel("Job Details", rows))
-
+    # Pipeline steps
     if j.steps:
         console.print()
         table = styled_table("Pipeline Steps")
         table.add_column("#", style="dim", width=3)
         table.add_column("Stage", min_width=22)
-        table.add_column("Status", min_width=12)
-        table.add_column("Error", style="dim")
+        table.add_column("Status", min_width=14)
+        table.add_column("Error", style="dim", max_width=50)
 
         for i, step in enumerate(j.steps, 1):
             table.add_row(
                 str(i),
                 step.name,
                 status_badge(step.status.value),
-                (step.error or "")[:60],
+                (step.error or "")[:50],
             )
 
         console.print(table)
 
+    # Output files
+    if j.workspace_dir and Path(j.workspace_dir).exists():
+        work_dir = Path(j.workspace_dir)
+        files = []
+        for f in sorted(work_dir.iterdir()):
+            if f.is_file():
+                size = f.stat().st_size
+                if size > 1024 * 1024:
+                    size_str = f"{size / (1024 * 1024):.1f} MB"
+                elif size > 1024:
+                    size_str = f"{size / 1024:.0f} KB"
+                else:
+                    size_str = f"{size} B"
+                files.append((f.name, size_str))
+
+        if files:
+            console.print()
+            ftable = styled_table("Output Files")
+            ftable.add_column("File", min_width=40)
+            ftable.add_column("Size", justify="right", min_width=10)
+            for name, size in files:
+                ftable.add_row(name, size)
+            console.print(ftable)
+
     console.print()
+
+    # Actions hint
+    if j.status == JobStatus.failed:
+        console.print(f"  [dim]Resume:[/dim] [accent]ytauto resume {j.id}[/accent]\n")
+    elif j.status == JobStatus.completed:
+        video_path = None
+        if j.workspace_dir:
+            mp4s = list(Path(j.workspace_dir).glob("*.mp4"))
+            if mp4s:
+                video_path = mp4s[0]
+        if video_path:
+            console.print(f'  [dim]Open video:[/dim] [accent]open "{video_path}"[/accent]\n')
 
 
 def resume(
@@ -139,7 +208,7 @@ def resume(
     context_path = work_dir / "pipeline_context.json"
 
     if not context_path.exists():
-        error("No pipeline context found. Cannot resume — the job may not have started.")
+        error("No pipeline context found. Cannot resume \u2014 the job may not have started.")
         raise typer.Exit(1)
 
     ctx = PipelineContext.load(work_dir)
@@ -163,7 +232,6 @@ def resume(
 
     orchestrator = PipelineOrchestrator(settings=settings)
 
-    # Ensure steps exist on job for tracking
     if not j.steps:
         j.steps = [PipelineStep(name=name) for name, _ in STAGE_REGISTRY]
 

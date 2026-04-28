@@ -3,11 +3,32 @@
 from __future__ import annotations
 
 import json
+import re
 
 import anthropic
 import openai
 
 from ytauto.config.settings import Settings
+
+
+def _extract_json(text: str) -> dict:
+    """Extract JSON from text that may contain markdown code fences."""
+    text = text.strip()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    match = re.search(r"```(?:json)?\s*\n?(.*?)\n?\s*```", text, re.DOTALL)
+    if match:
+        return json.loads(match.group(1).strip())
+
+    start = text.find("{")
+    end = text.rfind("}") + 1
+    if start >= 0 and end > start:
+        return json.loads(text[start:end])
+
+    raise json.JSONDecodeError("No valid JSON found in response", text, 0)
 
 SYSTEM_PROMPT = """\
 You are a YouTube SEO expert. You optimize video metadata for maximum \
@@ -66,7 +87,7 @@ def _generate_claude(prompt: str, settings: Settings) -> dict:
         system=SYSTEM_PROMPT,
         messages=[{"role": "user", "content": prompt}],
     )
-    return json.loads(message.content[0].text)
+    return _extract_json(message.content[0].text)
 
 
 def _generate_openai(prompt: str, settings: Settings) -> dict:
@@ -80,4 +101,4 @@ def _generate_openai(prompt: str, settings: Settings) -> dict:
         ],
         max_tokens=2048,
     )
-    return json.loads(response.choices[0].message.content)
+    return _extract_json(response.choices[0].message.content)

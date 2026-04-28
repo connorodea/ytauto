@@ -3,11 +3,35 @@
 from __future__ import annotations
 
 import json
+import re
 
 import anthropic
 import openai
 
 from ytauto.config.settings import Settings
+
+
+def _extract_json(text: str) -> dict:
+    """Extract JSON from text that may contain markdown code fences."""
+    # Try direct parse first
+    text = text.strip()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    # Strip markdown code fences
+    match = re.search(r"```(?:json)?\s*\n?(.*?)\n?\s*```", text, re.DOTALL)
+    if match:
+        return json.loads(match.group(1).strip())
+
+    # Try to find JSON object in the text
+    start = text.find("{")
+    end = text.rfind("}") + 1
+    if start >= 0 and end > start:
+        return json.loads(text[start:end])
+
+    raise json.JSONDecodeError("No valid JSON found in response", text, 0)
 
 # Duration presets: (target_minutes, section_count, words_approx)
 DURATION_PRESETS = {
@@ -96,7 +120,7 @@ def _generate_claude(prompt: str, settings: Settings) -> dict:
         messages=[{"role": "user", "content": prompt}],
     )
     raw = message.content[0].text
-    return json.loads(raw)
+    return _extract_json(raw)
 
 
 def _generate_openai(prompt: str, settings: Settings) -> dict:
@@ -111,4 +135,4 @@ def _generate_openai(prompt: str, settings: Settings) -> dict:
         max_tokens=4096,
     )
     raw = response.choices[0].message.content
-    return json.loads(raw)
+    return _extract_json(raw)
