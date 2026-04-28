@@ -32,9 +32,10 @@ STAGE_LABELS = {
     "script_generation": ("Writing script", "Generating video script with AI..."),
     "seo_generation": ("Optimizing SEO", "Creating title, tags, and description..."),
     "voiceover": ("Recording voice", "Generating voiceover narration..."),
+    "captions": ("Transcribing", "Getting word-level timestamps for captions..."),
     "visual_generation": ("Creating visuals", "Generating images for each section..."),
     "thumbnail_generation": ("Designing thumbnail", "Creating a clickable thumbnail..."),
-    "video_assembly": ("Rendering video", "Assembling final video with ffmpeg..."),
+    "video_assembly": ("Rendering video", "Ken Burns + transitions + effects + ffmpeg..."),
     "summary": ("Finishing up", "Finalizing job..."),
 }
 
@@ -106,6 +107,22 @@ def create(
         None, "--music", "-m",
         help="Path to background music MP3 file.",
     ),
+    transition: str = typer.Option(
+        "crossfade", "--transition", "-t",
+        help="Transition: crossfade, slide_left, slide_right, fade_black, cut.",
+    ),
+    captions: str = typer.Option(
+        None, "--captions",
+        help="Caption style: bold_centered, karaoke, highlight, pop, bounce, hormozi, mrbeast, cinematic, tiktok, minimal.",
+    ),
+    grain: str = typer.Option(
+        None, "--grain",
+        help="Path to grain/VHS overlay video for film aesthetic.",
+    ),
+    no_ken_burns: bool = typer.Option(
+        False, "--no-ken-burns",
+        help="Disable Ken Burns zoom/pan effect on images.",
+    ),
     open_after: bool = typer.Option(
         False, "--open",
         help="Open the video in your default player after creation.",
@@ -117,7 +134,7 @@ def create(
 ) -> None:
     """Create a complete YouTube video from a topic using AI.
 
-    Runs the full pipeline: script \u2192 SEO \u2192 voiceover \u2192 visuals \u2192 thumbnail \u2192 video.
+    Full pipeline: script \u2192 SEO \u2192 voiceover \u2192 captions \u2192 visuals \u2192 thumbnail \u2192 effects \u2192 render.
     """
     settings = get_settings()
     settings.ensure_directories()
@@ -195,6 +212,17 @@ def create(
             from ytauto.cli.theme import warning
             warning(f"Music file not found: {music}. Proceeding without background music.")
 
+    # Validate grain overlay path
+    grain_path = None
+    if grain:
+        from pathlib import Path as P
+        gp = P(grain).expanduser().resolve()
+        if gp.exists():
+            grain_path = gp
+        else:
+            from ytauto.cli.theme import warning
+            warning(f"Grain file not found: {grain}. Proceeding without grain overlay.")
+
     # Create job
     job = Job(topic=topic, duration_config=duration, voice_config=voice, engine_config=engine)
     work_dir = settings.workspaces_dir / job.id
@@ -210,9 +238,16 @@ def create(
     extras = f"Duration: {duration}  \u2502  Voice: {voice}  \u2502  Engine: {engine}"
     if channel and channel_context:
         extras += f"  \u2502  Channel: {channel}"
+    extras += f"  \u2502  Transition: {transition}"
+    if not no_ken_burns:
+        extras += "  \u2502  Ken Burns: \u2713"
+    if captions:
+        extras += f"  \u2502  Captions: {captions}"
     if music_path:
         extras += f"  \u2502  Music: \u2713"
-    extras += f"  \u2502  Job: {job.id}"
+    if grain_path:
+        extras += f"  \u2502  Grain: \u2713"
+    extras += f"\nJob: {job.id}"
 
     console.print()
     console.print(header("Creating Video", f'"{topic}"\n{extras}'))
@@ -232,6 +267,10 @@ def create(
         duration=duration, voice=voice, engine=engine,
         channel_id=channel, channel_context=channel_context,
         music_path=music_path,
+        transition=transition,
+        ken_burns=not no_ken_burns,
+        caption_style=captions,
+        grain_path=grain_path,
     )
 
     # Run pipeline with live stage display

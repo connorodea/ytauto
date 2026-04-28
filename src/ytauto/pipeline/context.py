@@ -21,7 +21,14 @@ class PipelineContext:
     channel_context: str | None = None
     music_path: Path | None = None
 
+    # Effect options
+    transition: str = "crossfade"
+    ken_burns: bool = True
+    caption_style: str | None = None
+    grain_path: Path | None = None
+
     # Accumulated outputs
+    word_timestamps: list[dict] | None = None
     script: dict | None = None
     seo_metadata: dict | None = None
     voiceover_path: Path | None = None

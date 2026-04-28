@@ -92,6 +92,22 @@ def stage_voiceover(ctx: PipelineContext, settings: Settings) -> None:
     ctx.voiceover_duration = get_audio_duration(output_path)
 
 
+def stage_captions(ctx: PipelineContext, settings: Settings) -> None:
+    """Transcribe voiceover for word-level timestamps (for captions)."""
+    if not ctx.caption_style:
+        return  # Captions not requested, skip
+
+    if not ctx.voiceover_path or not ctx.voiceover_path.exists():
+        raise RuntimeError("Voiceover must exist before caption transcription.")
+
+    from ytauto.video.captions import transcribe_for_timestamps
+
+    timestamps_path = ctx.work_dir / "word_timestamps.json"
+    ctx.word_timestamps = transcribe_for_timestamps(
+        ctx.voiceover_path, timestamps_path,
+    )
+
+
 def stage_visual_generation(ctx: PipelineContext, settings: Settings) -> None:
     """Generate images for each script section."""
     from ytauto.services.imagegen import generate_images
@@ -128,7 +144,7 @@ def stage_thumbnail_generation(ctx: PipelineContext, settings: Settings) -> None
 
 
 def stage_video_assembly(ctx: PipelineContext, settings: Settings) -> None:
-    """Assemble the final video from images + voiceover."""
+    """Assemble the final video with Ken Burns, transitions, captions, and effects."""
     from ytauto.services.ffmpeg import assemble_video
 
     if not ctx.voiceover_path or not ctx.voiceover_path.exists():
@@ -137,11 +153,14 @@ def stage_video_assembly(ctx: PipelineContext, settings: Settings) -> None:
     if not ctx.media_paths:
         raise RuntimeError("Visuals must be generated before video assembly.")
 
-    # Sort media paths to ensure correct order
     media = sorted(ctx.media_paths)
-
     title = ctx.topic.replace(" ", "_")[:50]
     output_path = ctx.work_dir / f"{title}.mp4"
+
+    # Get section headings for title overlays
+    section_headings = None
+    if ctx.script:
+        section_headings = [s.get("heading", "") for s in ctx.script.get("sections", [])]
 
     assemble_video(
         image_paths=media,
@@ -149,6 +168,12 @@ def stage_video_assembly(ctx: PipelineContext, settings: Settings) -> None:
         output_path=output_path,
         settings=settings,
         background_music_path=ctx.music_path,
+        transition=ctx.transition,
+        ken_burns=ctx.ken_burns,
+        section_headings=section_headings,
+        caption_style=ctx.caption_style,
+        word_timestamps=ctx.word_timestamps,
+        grain_path=ctx.grain_path,
     )
     ctx.final_video_path = output_path
 
@@ -166,6 +191,7 @@ STAGE_REGISTRY: list[tuple[str, callable]] = [
     ("script_generation", stage_script_generation),
     ("seo_generation", stage_seo_generation),
     ("voiceover", stage_voiceover),
+    ("captions", stage_captions),
     ("visual_generation", stage_visual_generation),
     ("thumbnail_generation", stage_thumbnail_generation),
     ("video_assembly", stage_video_assembly),
