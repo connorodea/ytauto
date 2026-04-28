@@ -1,4 +1,12 @@
-"""Shorts command — create vertical 9:16 YouTube Shorts with punchy hooks and bold captions."""
+"""Shorts command — create viral YouTube Shorts using stock footage + bold text overlays.
+
+Replicates the style of channels like Infinite Wealth Lab:
+- Real cinematic stock video clips (Pexels)
+- Center-cropped to vertical 9:16
+- Bold motivational text overlays
+- Punchy voiceover narration
+- Fast cuts between clips
+"""
 
 from __future__ import annotations
 
@@ -20,27 +28,27 @@ from ytauto.cli.theme import (
     header,
     result_panel,
     success,
+    warning,
 )
 from ytauto.config.settings import get_settings
 from ytauto.models.job import Job, PipelineStep
 from ytauto.store.json_store import JsonDirectoryStore
 
-# Shorts-specific pipeline stages
 SHORTS_STAGES = [
     "script",
     "voiceover",
-    "captions",
-    "visuals",
-    "render",
+    "stock_footage",
+    "crop_and_cut",
+    "text_overlays",
     "done",
 ]
 
 STAGE_LABELS = {
     "script": ("Writing hook", "Generating viral Shorts script..."),
     "voiceover": ("Recording voice", "Deepgram Aura TTS narration..."),
-    "captions": ("Transcribing", "Word-level timestamps for captions..."),
-    "visuals": ("Creating visuals", "Generating vertical 9:16 images..."),
-    "render": ("Rendering Short", "Ken Burns + fast cuts + caption burn..."),
+    "stock_footage": ("Sourcing footage", "Downloading cinematic stock clips from Pexels..."),
+    "crop_and_cut": ("Cropping & cutting", "Vertical 9:16 crop + fast cuts + voiceover..."),
+    "text_overlays": ("Adding text", "Burning bold text overlays..."),
     "done": ("Finishing", ""),
 }
 
@@ -51,7 +59,7 @@ def _build_stage_table(
 ) -> Table:
     table = Table(show_header=False, show_edge=False, box=None, padding=(0, 2))
     table.add_column("icon", width=3)
-    table.add_column("stage", min_width=28)
+    table.add_column("stage", min_width=30)
     table.add_column("time", width=8, justify="right")
 
     for name in stages:
@@ -90,18 +98,19 @@ def shorts(
         None, "--engine", "-e",
         help="LLM engine: claude or openai.",
     ),
-    captions_style: str = typer.Option(
-        "hormozi", "--captions", "-c",
-        help="Caption style: hormozi, mrbeast, tiktok, pop, bounce, bold_centered.",
+    text_position: str = typer.Option(
+        "top", "--text-pos",
+        help="Text overlay position: top, center, bottom.",
     ),
     open_after: bool = typer.Option(
         False, "--open",
-        help="Open the Short in your default player after creation.",
+        help="Open the Short after creation.",
     ),
 ) -> None:
-    """Create a viral YouTube Short (vertical 9:16, 30-60s, bold captions).
+    """Create a viral YouTube Short with stock footage + bold text overlays.
 
-    Optimized for scroll-stopping hooks, rapid pacing, and punchy delivery.
+    Uses real cinematic stock video (Pexels), cropped to 9:16 vertical,
+    with bold motivational text burned on top — like Infinite Wealth Lab.
     """
     settings = get_settings()
     settings.ensure_directories()
@@ -110,7 +119,13 @@ def shorts(
     engine = engine or settings.default_llm_provider
     seconds = max(30, min(60, seconds))
 
-    # Interactive topic prompt if not provided
+    if not settings.has_pexels():
+        error("Pexels API key required for stock footage Shorts.")
+        console.print("  [dim]Set YTAUTO_PEXELS_API_KEY in ~/.ytauto/.env[/dim]")
+        console.print("  [dim]Get a free key at: https://www.pexels.com/api/[/dim]\n")
+        raise typer.Exit(1)
+
+    # Interactive topic prompt
     if not topic:
         console.print()
         console.print(header("New YouTube Short", "What's the hook?"))
@@ -125,7 +140,7 @@ def shorts(
     job = Job(topic=topic, duration_config=f"{seconds}s", voice_config=voice, engine_config=engine)
     work_dir = settings.workspaces_dir / job.id
     work_dir.mkdir(parents=True, exist_ok=True)
-    (work_dir / "media").mkdir(exist_ok=True)
+    (work_dir / "clips").mkdir(exist_ok=True)
     job.workspace_dir = str(work_dir)
     job.steps = [PipelineStep(name=name) for name in SHORTS_STAGES]
 
@@ -136,13 +151,18 @@ def shorts(
     console.print(header(
         "Creating YouTube Short",
         f'"{topic}"\n'
-        f"Duration: {seconds}s  \u2502  Voice: {voice}  \u2502  Captions: {captions_style}  \u2502  Job: {job.id}",
+        f"Duration: {seconds}s  \u2502  Voice: {voice}  \u2502  Text: {text_position}  \u2502  Stock footage: Pexels\n"
+        f"Job: {job.id}",
     ))
     console.print()
 
     completed: set[str] = set()
     timings: dict[str, float] = {}
     current_stage: str | None = None
+    script_data: dict = {}
+    voiceover_path = work_dir / "voiceover.mp3"
+    clip_paths: list[Path] = []
+    final_path: Path | None = None
 
     try:
         with Live(
@@ -150,7 +170,7 @@ def shorts(
             console=console, refresh_per_second=4,
         ) as live:
 
-            def _run_stage(name: str, fn):
+            def _run(name: str, fn):
                 nonlocal current_stage
                 current_stage = name
                 live.update(_build_stage_table(SHORTS_STAGES, completed, current_stage, None, timings))
@@ -161,9 +181,7 @@ def shorts(
                 timings[name] = elapsed
                 live.update(_build_stage_table(SHORTS_STAGES, completed, None, None, timings))
 
-            # ── Stage 1: Script ──────────────────────────────────────────
-            script_data = {}
-
+            # ── 1. Script ────────────────────────────────────────────────
             def do_script():
                 nonlocal script_data
                 from ytauto.services.shorts import generate_shorts_script
@@ -174,7 +192,6 @@ def shorts(
                 (work_dir / "script.json").write_text(
                     json.dumps(script_data, indent=2), encoding="utf-8",
                 )
-                # Build narration
                 parts = [script_data.get("hook", "")]
                 for s in script_data.get("sections", []):
                     parts.append(s.get("narration", ""))
@@ -182,148 +199,154 @@ def shorts(
                 narration = "\n\n".join(p for p in parts if p)
                 (work_dir / "narration.txt").write_text(narration, encoding="utf-8")
 
-            _run_stage("script", do_script)
+            _run("script", do_script)
 
-            # ── Stage 2: Voiceover ───────────────────────────────────────
-            voiceover_path = work_dir / "voiceover.mp3"
-
+            # ── 2. Voiceover ─────────────────────────────────────────────
             def do_voiceover():
                 from ytauto.services.tts import synthesize_voiceover
                 narration = (work_dir / "narration.txt").read_text(encoding="utf-8")
                 synthesize_voiceover(narration, voiceover_path, voice=voice, settings=settings)
 
-            _run_stage("voiceover", do_voiceover)
+            _run("voiceover", do_voiceover)
 
-            # ── Stage 3: Captions (word timestamps) ──────────────────────
-            word_timestamps = []
-
-            def do_captions():
-                nonlocal word_timestamps
-                from ytauto.video.captions import transcribe_for_timestamps
-                ts_path = work_dir / "word_timestamps.json"
-                word_timestamps = transcribe_for_timestamps(voiceover_path, ts_path)
-
-            _run_stage("captions", do_captions)
-
-            # ── Stage 4: Visuals (vertical 9:16) ─────────────────────────
-            media_paths: list[Path] = []
-
-            def do_visuals():
-                nonlocal media_paths
-                from ytauto.services.imagegen import generate_images
+            # ── 3. Stock footage ─────────────────────────────────────────
+            def do_stock():
+                nonlocal clip_paths
+                from ytauto.services.stockvideo import source_clips_for_shorts
                 sections = script_data.get("sections", [])
-                # Override visual prompts to be vertical
-                for s in sections:
-                    vp = s.get("visual_prompt", s.get("narration", "abstract"))
-                    s["visual_prompt"] = (
-                        f"Vertical 9:16 portrait composition, dramatic close-up, "
-                        f"dark cinematic lighting, high contrast, moody: {vp}"
-                    )
-                media_paths = generate_images(
-                    sections=sections, output_dir=work_dir / "media", settings=settings,
+                clip_paths = source_clips_for_shorts(
+                    sections=sections,
+                    output_dir=work_dir / "clips",
+                    settings=settings,
                 )
 
-            _run_stage("visuals", do_visuals)
+            _run("stock_footage", do_stock)
 
-            # ── Stage 5: Render (vertical with Ken Burns + captions) ─────
-            final_path: Path | None = None
-
-            def do_render():
+            # ── 4. Crop to vertical + assemble with voiceover ────────────
+            def do_crop():
                 nonlocal final_path
-                from ytauto.services.ffmpeg import get_audio_duration
-                audio_dur = get_audio_duration(voiceover_path)
-                n_images = len(media_paths)
-                if n_images == 0:
-                    raise RuntimeError("No images generated.")
-                img_dur = max(2.0, audio_dur / n_images)
-
-                # Render each image with Ken Burns at 1080x1920 (vertical)
                 import subprocess
-                import random
-                clip_paths: list[Path] = []
-                for i, img in enumerate(sorted(media_paths)):
-                    clip = work_dir / f"_short_clip_{i:03d}.mp4"
-                    total_frames = int(img_dur * 30)
-                    zoom_in = random.choice([True, False])
-                    z_expr = f"min(1+0.15*on/{total_frames},1.15)" if zoom_in else f"1.15-0.15*on/{total_frames}"
-                    x_expr = "iw/2-(iw/zoom/2)"
-                    y_expr = "ih/2-(ih/zoom/2)"
-                    filt = (
-                        f"scale=2160:3840,zoompan=z='{z_expr}':x='{x_expr}':y='{y_expr}':"
-                        f"d={total_frames}:s=1080x1920:fps=30,setsar=1"
-                    )
-                    subprocess.run([
-                        "ffmpeg", "-y", "-loop", "1", "-framerate", "30",
-                        "-i", str(img), "-filter_complex", filt,
-                        "-c:v", "libx264", "-crf", "20", "-preset", "fast",
-                        "-pix_fmt", "yuv420p", "-t", str(img_dur),
-                        str(clip),
-                    ], capture_output=True, check=True)
-                    clip_paths.append(clip)
+                from ytauto.video.crop import crop_to_vertical, get_video_duration
+                from ytauto.services.ffmpeg import get_audio_duration
 
-                # Fast-cut concatenation (short clips = hard cuts work best)
-                from ytauto.video.transitions import join_clips_with_transition
-                joined = work_dir / "_short_joined.mp4"
-                join_clips_with_transition(clip_paths, joined, transition="cut")
+                if not clip_paths:
+                    raise RuntimeError("No stock footage clips downloaded.")
+
+                audio_dur = get_audio_duration(voiceover_path)
+                n_clips = len(clip_paths)
+                target_per_clip = audio_dur / n_clips
+
+                # Crop each clip to vertical and trim to target duration
+                cropped: list[Path] = []
+                for i, clip in enumerate(clip_paths):
+                    out = work_dir / f"_cropped_{i:03d}.mp4"
+                    clip_dur = get_video_duration(clip)
+                    trim_dur = min(target_per_clip, clip_dur)
+                    crop_to_vertical(clip, out, duration=trim_dur)
+                    cropped.append(out)
+
+                # Concatenate clips
+                import tempfile
+                concat_file = work_dir / "_concat.txt"
+                concat_file.write_text(
+                    "\n".join(f"file '{p}'" for p in cropped), encoding="utf-8",
+                )
+
+                joined = work_dir / "_joined.mp4"
+                subprocess.run([
+                    "ffmpeg", "-y",
+                    "-f", "concat", "-safe", "0",
+                    "-i", str(concat_file),
+                    "-c:v", "libx264", "-crf", "18", "-preset", "medium",
+                    "-pix_fmt", "yuv420p", "-an",
+                    str(joined),
+                ], capture_output=True, check=True)
 
                 # Mux with voiceover
-                muxed = work_dir / "_short_muxed.mp4"
+                muxed = work_dir / "_muxed.mp4"
                 subprocess.run([
                     "ffmpeg", "-y",
                     "-i", str(joined), "-i", str(voiceover_path),
                     "-map", "0:v", "-map", "1:a",
                     "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
-                    "-shortest", str(muxed),
+                    "-shortest",
+                    str(muxed),
                 ], capture_output=True, check=True)
 
-                # Burn captions if ASS filter available
-                from ytauto.services.ffmpeg import _has_filter
-                if word_timestamps and _has_filter("ass"):
-                    from ytauto.video.captions import generate_ass_captions, burn_captions, CaptionStyle, CAPTION_PRESETS
-                    ass_path = work_dir / "captions.ass"
-                    style = CAPTION_PRESETS.get(captions_style, CAPTION_PRESETS["hormozi"])
-                    generate_ass_captions(
-                        word_timestamps, ass_path, style=style,
-                        video_width=1080, video_height=1920,
-                    )
-                    captioned = work_dir / "_short_captioned.mp4"
-                    burn_captions(muxed, ass_path, captioned)
-                    final_source = captioned
-                else:
-                    # Still generate ASS file for external use
-                    if word_timestamps:
-                        from ytauto.video.captions import generate_ass_captions, CAPTION_PRESETS
-                        ass_path = work_dir / "captions.ass"
-                        style = CAPTION_PRESETS.get(captions_style, CAPTION_PRESETS["hormozi"])
-                        generate_ass_captions(
-                            word_timestamps, ass_path, style=style,
-                            video_width=1080, video_height=1920,
-                        )
-                    final_source = muxed
-
-                # Move to final output
-                title_slug = topic.replace(" ", "_")[:40]
-                final_path = work_dir / f"{title_slug}_short.mp4"
-                import shutil
-                shutil.move(str(final_source), str(final_path))
+                final_path = muxed
 
                 # Cleanup
-                for f in work_dir.glob("_short_*.mp4"):
+                for f in cropped:
                     f.unlink(missing_ok=True)
-                for f in work_dir.glob("_short_*.mp4"):
-                    f.unlink(missing_ok=True)
+                concat_file.unlink(missing_ok=True)
+                joined.unlink(missing_ok=True)
 
-            _run_stage("render", do_render)
+            _run("crop_and_cut", do_crop)
 
-            # ── Stage 6: Done ────────────────────────────────────────────
+            # ── 5. Bold text overlays ────────────────────────────────────
+            def do_text():
+                nonlocal final_path
+                from ytauto.services.ffmpeg import _has_filter, get_audio_duration
+
+                if not _has_filter("drawtext"):
+                    # Save text data but skip burn
+                    from ytauto.video.text_overlay import extract_key_phrases
+                    phrases = extract_key_phrases(script_data)
+                    (work_dir / "text_overlays.json").write_text(
+                        json.dumps(phrases, indent=2), encoding="utf-8",
+                    )
+                    return
+
+                from ytauto.video.text_overlay import extract_key_phrases, burn_text_overlays
+
+                phrases = extract_key_phrases(script_data)
+                (work_dir / "text_overlays.json").write_text(
+                    json.dumps(phrases, indent=2), encoding="utf-8",
+                )
+
+                if not phrases or not final_path:
+                    return
+
+                # Time the phrases evenly across the video
+                audio_dur = get_audio_duration(voiceover_path)
+                segment_dur = audio_dur / len(phrases)
+
+                text_segments = []
+                for i, phrase in enumerate(phrases):
+                    text_segments.append({
+                        "text": phrase["text"],
+                        "start": i * segment_dur,
+                        "end": (i + 1) * segment_dur - 0.1,
+                    })
+
+                output = work_dir / "_with_text.mp4"
+                burn_text_overlays(
+                    final_path, text_segments, output,
+                    font_size=54, position=text_position,
+                    outline_width=4, bg_opacity=0.4,
+                )
+                # Swap
+                final_path.unlink(missing_ok=True)
+                final_path = output
+
+            _run("text_overlays", do_text)
+
+            # ── 6. Finalize ──────────────────────────────────────────────
             def do_done():
+                nonlocal final_path
+                title_slug = topic.replace(" ", "_")[:40]
+                dest = work_dir / f"{title_slug}_short.mp4"
+                if final_path and final_path.exists() and final_path != dest:
+                    import shutil
+                    shutil.move(str(final_path), str(dest))
+                    final_path = dest
+
+                job.video_path = str(final_path) if final_path else ""
                 job.status = "completed"
-                if final_path:
-                    job.video_path = str(final_path)
                 job.touch()
                 job_store.save(job)
 
-            _run_stage("done", do_done)
+            _run("done", do_done)
 
     except Exception as exc:
         console.print(_build_stage_table(SHORTS_STAGES, completed, None, current_stage, timings))
@@ -338,6 +361,7 @@ def shorts(
         ("Job ID", f"[id]{job.id}[/id]"),
         ("Title", f"[bold bright_white]{title}[/bold bright_white]"),
         ("Format", "9:16 Vertical (1080x1920)"),
+        ("Source", "Pexels Stock Footage"),
     ]
 
     if final_path and final_path.exists():
@@ -350,7 +374,7 @@ def shorts(
         dur = get_audio_duration(voiceover_path)
         rows.append(("Duration", f"{int(dur)}s"))
 
-    rows.append(("Captions", captions_style))
+    rows.append(("Clips", f"{len(clip_paths)} stock clips"))
     rows.append(("Total Time", f"{sum(timings.values()):.0f}s"))
 
     console.print()

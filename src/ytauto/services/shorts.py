@@ -28,7 +28,8 @@ Return a JSON object:
   "sections": [
     {{
       "narration": "2-3 sentences of punchy narration for this beat",
-      "visual_prompt": "vertical 9:16 cinematic image prompt — dramatic, dark, high contrast, close-up or abstract"
+      "heading": "short bold text overlay phrase (3-6 words, shown on screen)",
+      "visual_query": "stock video search query for this section (e.g. 'businessman walking confidently dark hallway', 'luxury car driving night city', 'stock market trading screens')"
     }}
   ],
   "outro": "strong 5-second closer — call to action (follow for more, save this)",
@@ -43,7 +44,8 @@ Requirements:
 - 3-5 sections (beats) that build tension rapidly
 - Conversational but authoritative tone — like telling a secret
 - End with urgency: "follow for more" or "save this before it's taken down"
-- Visual prompts must be VERTICAL (portrait, 9:16) with dramatic close-ups"""
+- Each heading should be a punchy 3-6 word phrase shown as big bold text on screen
+- Visual queries should describe cinematic stock footage scenes (business, luxury, dramatic, dark moody)"""
 
 
 def _extract_json(text: str) -> dict:

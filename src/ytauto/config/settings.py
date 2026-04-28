@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     deepgram_api_key: SecretStr = SecretStr("")
     elevenlabs_api_key: SecretStr = SecretStr("")
 
+    # --- Stock Media ---
+    pexels_api_key: SecretStr = SecretStr("")
+
     # --- Defaults ---
     default_llm_provider: Literal["claude", "openai"] = "claude"
     default_tts_provider: Literal["deepgram", "openai", "elevenlabs"] = "deepgram"
@@ -62,6 +65,9 @@ class Settings(BaseSettings):
 
     def has_openai(self) -> bool:
         return bool(self.openai_api_key.get_secret_value())
+
+    def has_pexels(self) -> bool:
+        return bool(self.pexels_api_key.get_secret_value())
 
     def has_deepgram(self) -> bool:
         return bool(self.deepgram_api_key.get_secret_value())
