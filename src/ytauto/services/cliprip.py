@@ -140,19 +140,21 @@ def rip_clips(
         clip_name = f"{clip_id}_rip_{i + 1:03d}.mp4"
         clip_path = clips_dir / clip_name
 
-        result = subprocess.run(
-            [
-                "ffmpeg", "-y",
-                "-ss", str(start),
-                "-to", str(end),
-                "-i", str(source),
-                "-c:v", "libx264", "-crf", "20", "-preset", "fast",
-                "-pix_fmt", "yuv420p",
-                "-an",
-                str(clip_path),
-            ],
-            capture_output=True, text=True, timeout=60,
-        )
+        cmd = [
+            "ffmpeg", "-y",
+            "-ss", str(start),
+            "-to", str(end),
+            "-i", str(source),
+            "-c:v", "libx264", "-crf", "20", "-preset", "fast",
+            "-pix_fmt", "yuv420p",
+        ]
+        if strip_audio:
+            cmd.append("-an")
+        else:
+            cmd.extend(["-c:a", "aac", "-b:a", "192k"])
+        cmd.append(str(clip_path))
+
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
 
         if result.returncode != 0:
             continue

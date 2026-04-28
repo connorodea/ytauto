@@ -188,8 +188,8 @@ def clips_rip(
         help="Scene detection sensitivity (0.0-1.0, lower=more cuts).",
     ),
     keep_audio: bool = typer.Option(
-        False, "--keep-audio",
-        help="Keep audio track (default: strips voiceover/music).",
+        True, "--keep-audio/--strip-audio",
+        help="Keep or strip the audio track (default: keep).",
     ),
     min_duration: float = typer.Option(
         2.0, "--min-dur",
