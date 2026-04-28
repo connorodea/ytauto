@@ -123,6 +123,18 @@ def create(
         False, "--no-ken-burns",
         help="Disable Ken Burns zoom/pan effect on images.",
     ),
+    no_seo: bool = typer.Option(
+        False, "--no-seo",
+        help="Skip SEO metadata generation.",
+    ),
+    no_thumbnail: bool = typer.Option(
+        False, "--no-thumbnail",
+        help="Skip thumbnail generation (saves ~25s).",
+    ),
+    no_visuals: bool = typer.Option(
+        False, "--no-visuals",
+        help="Skip image generation (use existing media/).",
+    ),
     open_after: bool = typer.Option(
         False, "--open",
         help="Open the video in your default player after creation.",
@@ -271,6 +283,9 @@ def create(
         ken_burns=not no_ken_burns,
         caption_style=captions,
         grain_path=grain_path,
+        skip_seo=no_seo,
+        skip_thumbnail=no_thumbnail,
+        skip_visuals=no_visuals,
     )
 
     # Run pipeline with live stage display

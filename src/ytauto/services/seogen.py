@@ -9,6 +9,7 @@ import anthropic
 import openai
 
 from ytauto.config.settings import Settings
+from ytauto.services.retry import retry
 
 
 def _extract_json(text: str) -> dict:
@@ -79,6 +80,7 @@ def generate_seo(
         raise RuntimeError("No LLM API key configured. Run 'ytauto setup'.")
 
 
+@retry(max_attempts=3)
 def _generate_claude(prompt: str, settings: Settings) -> dict:
     client = anthropic.Anthropic(api_key=settings.anthropic_api_key.get_secret_value())
     message = client.messages.create(
@@ -90,6 +92,7 @@ def _generate_claude(prompt: str, settings: Settings) -> dict:
     return _extract_json(message.content[0].text)
 
 
+@retry(max_attempts=3)
 def _generate_openai(prompt: str, settings: Settings) -> dict:
     client = openai.OpenAI(api_key=settings.openai_api_key.get_secret_value())
     response = client.chat.completions.create(

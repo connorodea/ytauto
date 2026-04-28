@@ -102,6 +102,7 @@ from ytauto.cli.render import render  # noqa: E402
 from ytauto.cli.upload import upload  # noqa: E402
 from ytauto.cli.channel import channels, channel_add, channel_show  # noqa: E402
 from ytauto.cli.open_cmd import open_video, delete_job  # noqa: E402
+from ytauto.cli.batch import batch  # noqa: E402
 
 app.command()(create)
 app.command()(doctor)
@@ -118,6 +119,7 @@ app.command(name="channel-add")(channel_add)
 app.command(name="channel-show")(channel_show)
 app.command(name="open")(open_video)
 app.command(name="delete")(delete_job)
+app.command()(batch)
 
 
 def run() -> None:

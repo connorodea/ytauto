@@ -8,6 +8,7 @@ import httpx
 import openai
 
 from ytauto.config.settings import Settings
+from ytauto.services.retry import retry
 
 
 def generate_images(
@@ -37,29 +38,13 @@ def generate_images(
 
     for i, section in enumerate(sections):
         prompt = section.get("visual_prompt", section.get("heading", "abstract background"))
-        # Prefix prompt with cinematic style guidance
         full_prompt = (
             f"Cinematic 16:9 YouTube video frame, dark dramatic lighting, "
             f"professional production quality: {prompt}"
         )
 
-        response = client.images.generate(
-            model="dall-e-3",
-            prompt=full_prompt[:4000],
-            size="1792x1024",
-            quality="hd",
-            n=1,
-        )
-
-        image_url = response.data[0].url
         image_path = output_dir / f"section_{i:03d}.png"
-
-        # Download the image
-        with httpx.Client(timeout=60) as http:
-            img_response = http.get(image_url)
-            img_response.raise_for_status()
-            image_path.write_bytes(img_response.content)
-
+        _generate_single_image(client, full_prompt, image_path)
         paths.append(image_path)
 
     return paths
@@ -92,6 +77,14 @@ def generate_thumbnail(
         f"Professional, high-production-value look."
     )
 
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    _generate_single_image(client, prompt, output_path)
+    return output_path
+
+
+@retry(max_attempts=3)
+def _generate_single_image(client: openai.OpenAI, prompt: str, output_path: Path) -> None:
+    """Generate a single image via DALL-E with retry on transient failures."""
     response = client.images.generate(
         model="dall-e-3",
         prompt=prompt[:4000],
@@ -101,11 +94,8 @@ def generate_thumbnail(
     )
 
     image_url = response.data[0].url
-    output_path.parent.mkdir(parents=True, exist_ok=True)
 
     with httpx.Client(timeout=60) as http:
         img_response = http.get(image_url)
         img_response.raise_for_status()
         output_path.write_bytes(img_response.content)
-
-    return output_path

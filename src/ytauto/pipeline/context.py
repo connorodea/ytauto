@@ -27,6 +27,11 @@ class PipelineContext:
     caption_style: str | None = None
     grain_path: Path | None = None
 
+    # Skip flags
+    skip_seo: bool = False
+    skip_thumbnail: bool = False
+    skip_visuals: bool = False
+
     # Accumulated outputs
     word_timestamps: list[dict] | None = None
     script: dict | None = None

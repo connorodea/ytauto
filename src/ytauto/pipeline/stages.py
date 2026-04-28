@@ -47,6 +47,9 @@ def stage_script_generation(ctx: PipelineContext, settings: Settings) -> None:
 
 def stage_seo_generation(ctx: PipelineContext, settings: Settings) -> None:
     """Generate SEO-optimized metadata."""
+    if ctx.skip_seo:
+        return
+
     from ytauto.services.seogen import generate_seo
 
     if not ctx.script:
@@ -110,6 +113,9 @@ def stage_captions(ctx: PipelineContext, settings: Settings) -> None:
 
 def stage_visual_generation(ctx: PipelineContext, settings: Settings) -> None:
     """Generate images for each script section."""
+    if ctx.skip_visuals:
+        return
+
     from ytauto.services.imagegen import generate_images
 
     if not ctx.script:
@@ -125,6 +131,9 @@ def stage_visual_generation(ctx: PipelineContext, settings: Settings) -> None:
 
 def stage_thumbnail_generation(ctx: PipelineContext, settings: Settings) -> None:
     """Generate a YouTube thumbnail."""
+    if ctx.skip_thumbnail:
+        return
+
     from ytauto.services.thumbnailgen import generate_thumbnail
 
     title = ""

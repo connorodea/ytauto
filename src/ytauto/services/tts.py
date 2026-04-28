@@ -8,6 +8,7 @@ import httpx
 import openai
 
 from ytauto.config.settings import Settings
+from ytauto.services.retry import retry
 
 OPENAI_VOICES = ("alloy", "echo", "fable", "onyx", "nova", "shimmer")
 
@@ -94,6 +95,7 @@ def _deepgram_tts(text: str, output_path: Path, voice: str, settings: Settings) 
     return output_path
 
 
+@retry(max_attempts=3)
 def _deepgram_request(text: str, model: str, api_key: str, output_path: Path) -> None:
     """Make a single Deepgram TTS API request."""
     with httpx.Client(timeout=120) as client:

@@ -9,6 +9,7 @@ import anthropic
 import openai
 
 from ytauto.config.settings import Settings
+from ytauto.services.retry import retry
 
 
 def _extract_json(text: str) -> dict:
@@ -119,6 +120,7 @@ def generate_script(
         )
 
 
+@retry(max_attempts=3)
 def _generate_claude(prompt: str, settings: Settings) -> dict:
     client = anthropic.Anthropic(api_key=settings.anthropic_api_key.get_secret_value())
     message = client.messages.create(
@@ -131,6 +133,7 @@ def _generate_claude(prompt: str, settings: Settings) -> dict:
     return _extract_json(raw)
 
 
+@retry(max_attempts=3)
 def _generate_openai(prompt: str, settings: Settings) -> dict:
     client = openai.OpenAI(api_key=settings.openai_api_key.get_secret_value())
     response = client.chat.completions.create(
