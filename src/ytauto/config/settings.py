@@ -30,8 +30,8 @@ class Settings(BaseSettings):
 
     # --- Defaults ---
     default_llm_provider: Literal["claude", "openai"] = "claude"
-    default_tts_provider: Literal["deepgram", "openai", "elevenlabs"] = "deepgram"
-    default_tts_voice: str = "aura-orion-en"
+    default_tts_provider: Literal["deepgram", "openai", "elevenlabs"] = "openai"
+    default_tts_voice: str = "onyx"
     default_image_provider: Literal["dalle"] = "dalle"
 
     # --- Video Defaults ---
