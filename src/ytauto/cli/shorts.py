@@ -98,6 +98,14 @@ def shorts(
         None, "--engine", "-e",
         help="LLM engine: claude or openai.",
     ),
+    clips_source: str = typer.Option(
+        "pexels", "--clips",
+        help="Clip source: 'pexels' (stock), 'library' (your clips), or path to a folder.",
+    ),
+    clip_tag: str = typer.Option(
+        None, "--clip-tag",
+        help="Filter library clips by tag (e.g., 'suits', 'business').",
+    ),
     text_position: str = typer.Option(
         "top", "--text-pos",
         help="Text overlay position: top, center, bottom.",
@@ -107,10 +115,12 @@ def shorts(
         help="Open the Short after creation.",
     ),
 ) -> None:
-    """Create a viral YouTube Short with stock footage + bold text overlays.
+    """Create a viral YouTube Short with real footage + bold text overlays.
 
-    Uses real cinematic stock video (Pexels), cropped to 9:16 vertical,
-    with bold motivational text burned on top — like Infinite Wealth Lab.
+    Footage sources:
+      --clips pexels   → Stock footage from Pexels API (default)
+      --clips library  → Your downloaded clips (ytauto clips-add)
+      --clips ~/path/  → Video files from a specific folder
     """
     settings = get_settings()
     settings.ensure_directories()
@@ -119,11 +129,19 @@ def shorts(
     engine = engine or settings.default_llm_provider
     seconds = max(30, min(60, seconds))
 
-    if not settings.has_pexels():
-        error("Pexels API key required for stock footage Shorts.")
+    if clips_source == "pexels" and not settings.has_pexels():
+        error("Pexels API key required for stock footage.")
         console.print("  [dim]Set YTAUTO_PEXELS_API_KEY in ~/.ytauto/.env[/dim]")
-        console.print("  [dim]Get a free key at: https://www.pexels.com/api/[/dim]\n")
+        console.print("  [dim]Or use your own clips: --clips library  or  --clips ~/path/[/dim]\n")
         raise typer.Exit(1)
+
+    # Determine clip source label
+    if clips_source == "pexels":
+        source_label = "Pexels Stock"
+    elif clips_source == "library":
+        source_label = "Your Clip Library"
+    else:
+        source_label = f"Folder: {clips_source}"
 
     # Interactive topic prompt
     if not topic:
@@ -151,7 +169,7 @@ def shorts(
     console.print(header(
         "Creating YouTube Short",
         f'"{topic}"\n'
-        f"Duration: {seconds}s  \u2502  Voice: {voice}  \u2502  Text: {text_position}  \u2502  Stock footage: Pexels\n"
+        f"Duration: {seconds}s  \u2502  Voice: {voice}  \u2502  Text: {text_position}  \u2502  Clips: {source_label}\n"
         f"Job: {job.id}",
     ))
     console.print()
@@ -209,16 +227,41 @@ def shorts(
 
             _run("voiceover", do_voiceover)
 
-            # ── 3. Stock footage ─────────────────────────────────────────
+            # ── 3. Source footage ─────────────────────────────────────────
             def do_stock():
                 nonlocal clip_paths
-                from ytauto.services.stockvideo import source_clips_for_shorts
                 sections = script_data.get("sections", [])
-                clip_paths = source_clips_for_shorts(
-                    sections=sections,
-                    output_dir=work_dir / "clips",
-                    settings=settings,
-                )
+
+                if clips_source == "library":
+                    # Use clips from the local library
+                    from ytauto.services.clips import select_clips_for_sections
+                    clip_paths = select_clips_for_sections(
+                        sections, tag=clip_tag,
+                    )
+                elif clips_source != "pexels":
+                    # Use clips from a specific folder
+                    folder = Path(clips_source).expanduser().resolve()
+                    if not folder.is_dir():
+                        raise RuntimeError(f"Clips folder not found: {clips_source}")
+                    video_exts = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
+                    all_clips = sorted(
+                        f for f in folder.iterdir()
+                        if f.suffix.lower() in video_exts
+                    )
+                    if not all_clips:
+                        raise RuntimeError(f"No video files found in {clips_source}")
+                    # Cycle through available clips
+                    import random
+                    random.shuffle(all_clips)
+                    clip_paths = [all_clips[i % len(all_clips)] for i in range(len(sections))]
+                else:
+                    # Default: Pexels stock footage
+                    from ytauto.services.stockvideo import source_clips_for_shorts
+                    clip_paths = source_clips_for_shorts(
+                        sections=sections,
+                        output_dir=work_dir / "clips",
+                        settings=settings,
+                    )
 
             _run("stock_footage", do_stock)
 
@@ -361,7 +404,7 @@ def shorts(
         ("Job ID", f"[id]{job.id}[/id]"),
         ("Title", f"[bold bright_white]{title}[/bold bright_white]"),
         ("Format", "9:16 Vertical (1080x1920)"),
-        ("Source", "Pexels Stock Footage"),
+        ("Source", source_label),
     ]
 
     if final_path and final_path.exists():
