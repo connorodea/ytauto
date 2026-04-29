@@ -22,11 +22,10 @@ logger = logging.getLogger(__name__)
 
 W, H = 1080, 1920
 FPS = 30
-VIDEO_WIDTH = 1000          # Clip scaled to this width (40px margin each side)
-VIDEO_X = 40                # Left margin for video
-VIDEO_Y = 380               # Top of video area
-TITLE_Y = 100               # Y position for title text
-SUBTITLE_MARGIN = 50        # px above bottom of video area
+VIDEO_WIDTH = 1080           # Clip fills full width — edge to edge
+VIDEO_Y = 340                # Top of video area (right below title)
+TITLE_Y = 60                 # Y position for title text start
+SUBTITLE_MARGIN = 70         # px above bottom of video area
 
 # Colors for highlighted title words
 HIGHLIGHT_COLORS = [
@@ -100,8 +99,8 @@ def compose_short(
     work = output_path.parent / "_compose_work"
     work.mkdir(exist_ok=True)
 
-    title_font = _get_font(38)
-    sub_font = _get_font(30)
+    title_font = _get_font(52)
+    sub_font = _get_font(38)
 
     # Pre-compute subtitle chunks
     sub_chunks = _chunk_subtitle(word_timestamps)
@@ -166,20 +165,38 @@ def compose_short(
             # Paste title (static)
             canvas.paste(title_img, (0, 0), title_img)
 
-            # Paste video frame centered
+            # Paste video frame — fill from title bottom to canvas bottom
             try:
                 vframe = Image.open(frame_file)
                 vw, vh = vframe.size
-                # Center the video frame
-                vx = (W - vw) // 2
-                vy = VIDEO_Y
-                canvas.paste(vframe, (vx, vy))
 
-                # Draw subtitle at bottom of video area
+                # Fill the entire space below the title
+                available_h = H - VIDEO_Y
+                # Scale to fill width, then crop height to fit available space
+                scale = W / vw
+                target_vw = W
+                target_vh = int(vh * scale)
+
+                if target_vh < available_h:
+                    # Video is shorter than available — scale to fill height instead
+                    scale = available_h / vh
+                    target_vw = int(vw * scale)
+                    target_vh = available_h
+
+                vframe = vframe.resize((target_vw, target_vh), Image.LANCZOS)
+
+                # Center crop to W x available_h
+                crop_x = max(0, (target_vw - W) // 2)
+                crop_y = max(0, (target_vh - available_h) // 2)
+                vframe = vframe.crop((crop_x, crop_y, crop_x + W, crop_y + available_h))
+                canvas.paste(vframe, (0, VIDEO_Y))
+                vw, vh = W, available_h
+
+                # Draw subtitle near bottom of frame
                 active_sub = _get_active_subtitle(sub_chunks, t)
                 if active_sub:
                     draw = ImageDraw.Draw(canvas)
-                    sub_y = vy + vh - SUBTITLE_MARGIN
+                    sub_y = H - 120  # ~120px from bottom of canvas
                     _draw_subtitle(draw, active_sub, sub_font, sub_y)
 
                 vframe.close()
@@ -297,15 +314,14 @@ def _get_active_subtitle(
 
 
 def _draw_subtitle(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont, y: int):
-    """Draw subtitle text centered at y position."""
-    # Word wrap if needed
+    """Draw subtitle text centered at y position — bold, outlined, readable."""
     words = text.split()
     lines = []
     current = ""
     for w in words:
         test = f"{current} {w}".strip()
         bbox = font.getbbox(test)
-        if bbox[2] - bbox[0] > VIDEO_WIDTH - 40 and current:
+        if bbox[2] - bbox[0] > W - 100 and current:
             lines.append(current)
             current = w
         else:
@@ -313,13 +329,14 @@ def _draw_subtitle(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTyp
     if current:
         lines.append(current)
 
-    line_h = font.getbbox("Ay")[3] - font.getbbox("Ay")[1] + 8
+    line_h = font.getbbox("Ay")[3] - font.getbbox("Ay")[1] + 12
     for i, line in enumerate(lines):
         bbox = font.getbbox(line)
         lw = bbox[2] - bbox[0]
         x = (W - lw) // 2
         ly = y - (len(lines) - i) * line_h
-        _draw_outlined(draw, (x, ly), line, font, fill=(255, 255, 255), outline=(0, 0, 0), ow=3)
+        # Thick outline for readability over video
+        _draw_outlined(draw, (x, ly), line, font, fill=(255, 255, 255), outline=(0, 0, 0), ow=4)
 
 
 def _get_dur(p: Path) -> float:
