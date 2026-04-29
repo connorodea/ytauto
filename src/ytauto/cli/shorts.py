@@ -1,10 +1,10 @@
-"""Shorts command — real footage + original audio + bold text overlays.
+"""Shorts command — real footage + original audio + captions of what's being said.
 
-Replicates the Infinite Wealth Lab format:
-- Real movie/TV clips (Suits, etc.) with ORIGINAL AUDIO kept
-- Center-cropped to vertical 9:16
-- Bold motivational text overlays burned on top
-- No AI voiceover — the show's dialogue IS the content
+Replicates Infinite Wealth Lab format:
+- Real movie/TV clips with ORIGINAL AUDIO (Harvey Specter speaking)
+- Scaled to fill 9:16 vertical (no chopping — pillarbox/letterbox if needed)
+- Bold captions showing WHAT IS BEING SAID (Whisper transcription)
+- No AI voiceover
 """
 
 from __future__ import annotations
@@ -21,282 +21,232 @@ from rich.live import Live
 from rich.table import Table
 
 from ytauto.cli.theme import (
-    ACCENT,
-    ACCENT_DIM,
-    SUCCESS,
-    ERROR,
-    console,
-    error,
-    header,
-    result_panel,
-    success,
-    warning,
+    ACCENT, ACCENT_DIM, SUCCESS, ERROR,
+    console, error, header, result_panel, success,
 )
 from ytauto.config.settings import get_settings
 from ytauto.models.job import Job, PipelineStep
 from ytauto.store.json_store import JsonDirectoryStore
 
 SHORTS_STAGES = [
-    "text_generation",
     "select_clips",
-    "crop_and_assemble",
-    "burn_text",
+    "assemble",
+    "transcribe",
+    "burn_captions",
     "done",
 ]
 
 STAGE_LABELS = {
-    "text_generation": ("Writing text", "Generating bold overlay phrases..."),
     "select_clips": ("Selecting clips", "Picking clips from your library..."),
-    "crop_and_assemble": ("Cropping 9:16", "Vertical crop + concat with original audio..."),
-    "burn_text": ("Burning text", "Rendering bold text overlays with Pillow..."),
+    "assemble": ("Assembling", "9:16 scale + concat with original audio..."),
+    "transcribe": ("Transcribing", "Whisper \u2192 what\u2019s being said..."),
+    "burn_captions": ("Burning captions", "Bold word-by-word captions via Pillow..."),
     "done": ("Finishing", ""),
 }
 
 
-def _build_stage_table(
-    stages: list[str], completed: set[str], current: str | None,
-    failed: str | None, timings: dict[str, float],
-) -> Table:
-    table = Table(show_header=False, show_edge=False, box=None, padding=(0, 2))
-    table.add_column("icon", width=3)
-    table.add_column("stage", min_width=30)
-    table.add_column("time", width=8, justify="right")
-
+def _stage_table(stages, completed, current, failed, timings):
+    t = Table(show_header=False, show_edge=False, box=None, padding=(0, 2))
+    t.add_column("i", width=3)
+    t.add_column("s", min_width=30)
+    t.add_column("t", width=8, justify="right")
     for name in stages:
-        label, detail = STAGE_LABELS.get(name, (name, ""))
+        lb, dt = STAGE_LABELS.get(name, (name, ""))
         if name in completed:
-            icon = f"[bold {SUCCESS}]\u2713[/bold {SUCCESS}]"
-            t = f"[dim]{timings.get(name, 0):.1f}s[/dim]"
-            text = f"[dim]{label}[/dim]"
+            t.add_row(f"[bold {SUCCESS}]\u2713[/bold {SUCCESS}]", f"[dim]{lb}[/dim]", f"[dim]{timings.get(name,0):.1f}s[/dim]")
         elif name == failed:
-            icon = f"[bold {ERROR}]\u2717[/bold {ERROR}]"
-            t = ""
-            text = f"[bold {ERROR}]{label}[/bold {ERROR}]"
+            t.add_row(f"[bold {ERROR}]\u2717[/bold {ERROR}]", f"[bold {ERROR}]{lb}[/bold {ERROR}]", "")
         elif name == current:
-            icon = f"[bold {ACCENT}]\u25b8[/bold {ACCENT}]"
-            t = f"[{ACCENT}]...[/{ACCENT}]"
-            text = f"[bold bright_white]{label}[/bold bright_white]  [{ACCENT_DIM}]{detail}[/{ACCENT_DIM}]"
+            t.add_row(f"[bold {ACCENT}]\u25b8[/bold {ACCENT}]", f"[bold bright_white]{lb}[/bold bright_white]  [{ACCENT_DIM}]{dt}[/{ACCENT_DIM}]", f"[{ACCENT}]...[/{ACCENT}]")
         else:
-            icon = "[dim]\u2022[/dim]"
-            t = ""
-            text = f"[dim]{label}[/dim]"
-        table.add_row(icon, text, t)
-    return table
+            t.add_row("[dim]\u2022[/dim]", f"[dim]{lb}[/dim]", "")
+    return t
 
 
 def shorts(
-    topic: str = typer.Argument(None, help="The Shorts topic — generates text overlays to match."),
-    seconds: int = typer.Option(
-        45, "--seconds", "-s",
-        help="Target duration in seconds (30-60).",
-    ),
-    engine: str = typer.Option(
-        None, "--engine", "-e",
-        help="LLM engine for text generation: claude or openai.",
-    ),
-    clips_source: str = typer.Option(
-        "library", "--clips",
-        help="Clip source: 'library' (your clips), or path to a folder.",
-    ),
-    clip_tag: str = typer.Option(
-        None, "--clip-tag",
-        help="Filter library clips by tag (e.g., 'suits', 'business').",
-    ),
-    captions_style: str = typer.Option(
-        "hormozi", "--captions", "-c",
-        help="Caption style: hormozi, mrbeast, tiktok, cinematic, minimal.",
-    ),
-    num_clips: int = typer.Option(
-        4, "--num-clips", "-n",
-        help="Number of clips to use (3-8).",
-    ),
-    open_after: bool = typer.Option(
-        False, "--open",
-        help="Open the Short after creation.",
-    ),
+    topic: str = typer.Argument(None, help="Topic label (used for filename only)."),
+    seconds: int = typer.Option(45, "--seconds", "-s", help="Target duration (30-60)."),
+    clips_source: str = typer.Option("library", "--clips", help="'library' or path to folder."),
+    clip_tag: str = typer.Option(None, "--clip-tag", help="Filter clips by tag (e.g. 'suits')."),
+    captions_style: str = typer.Option("hormozi", "--captions", "-c", help="Caption style: hormozi, mrbeast, tiktok, cinematic, minimal."),
+    num_clips: int = typer.Option(4, "--num-clips", "-n", help="Number of clips (2-8)."),
+    open_after: bool = typer.Option(False, "--open", help="Open after creation."),
 ) -> None:
-    """Create a YouTube Short with real footage, original audio, and bold text.
+    """Create a YouTube Short with real footage, original audio, and captions.
 
-    Uses clips from your library (Suits, Peaky Blinders, etc.) with the
-    ORIGINAL show audio playing. Adds bold motivational text overlays on top.
-    No AI voiceover — the show's dialogue IS the content.
-
-    Like Infinite Wealth Lab, Motivation Madness, etc.
+    Picks clips from your library, keeps the ORIGINAL show audio,
+    transcribes what's being said with Whisper, and burns bold captions on top.
     """
     settings = get_settings()
     settings.ensure_directories()
-
-    engine = engine or settings.default_llm_provider
     seconds = max(30, min(60, seconds))
     num_clips = max(2, min(8, num_clips))
 
-    # Interactive topic prompt
     if not topic:
         console.print()
-        console.print(header("New YouTube Short", "What text should appear on screen?"))
+        console.print(header("New YouTube Short", "Label for this Short (just for the filename):"))
         console.print()
-        topic = typer.prompt("  Topic / theme for text overlays")
+        topic = typer.prompt("  Label")
         if not topic.strip():
-            error("Topic cannot be empty.")
-            raise typer.Exit(1)
+            topic = "short"
         console.print()
 
-    # Determine source label
-    if clips_source == "library":
-        source_label = "Clip Library"
-        if clip_tag:
-            source_label += f" (tag: {clip_tag})"
-    else:
-        source_label = f"Folder: {clips_source}"
+    src_label = f"Clip Library (tag: {clip_tag})" if clip_tag else "Clip Library" if clips_source == "library" else clips_source
 
-    # Create job
-    job = Job(topic=topic, duration_config=f"{seconds}s", engine_config=engine)
+    job = Job(topic=topic, duration_config=f"{seconds}s")
     work_dir = settings.workspaces_dir / job.id
     work_dir.mkdir(parents=True, exist_ok=True)
     job.workspace_dir = str(work_dir)
-    job.steps = [PipelineStep(name=name) for name in SHORTS_STAGES]
-
+    job.steps = [PipelineStep(name=n) for n in SHORTS_STAGES]
     job_store = JsonDirectoryStore[Job](settings.jobs_dir, Job)
     job_store.save(job)
 
     console.print()
     console.print(header(
         "Creating YouTube Short",
-        f'"{topic}"\n'
-        f"Duration: ~{seconds}s  \u2502  Clips: {source_label}  \u2502  Text style: {captions_style}\n"
-        f"Original audio: \u2713  \u2502  AI voiceover: none  \u2502  Job: {job.id}",
+        f'"{topic}"\n~{seconds}s  \u2502  Clips: {src_label}  \u2502  Captions: {captions_style}\nOriginal audio: \u2713  \u2502  Job: {job.id}',
     ))
     console.print()
 
-    completed: set[str] = set()
-    timings: dict[str, float] = {}
-    current_stage: str | None = None
-    text_phrases: list[str] = []
+    done: set[str] = set()
+    times: dict[str, float] = {}
+    cur: str | None = None
     clip_paths: list[Path] = []
     final_path: Path | None = None
-    title_text = topic
+    word_ts: list[dict] = []
 
     try:
-        with Live(
-            _build_stage_table(SHORTS_STAGES, completed, None, None, timings),
-            console=console, refresh_per_second=4,
-        ) as live:
+        with Live(_stage_table(SHORTS_STAGES, done, None, None, times), console=console, refresh_per_second=4) as live:
 
-            def _run(name: str, fn):
-                nonlocal current_stage
-                current_stage = name
-                live.update(_build_stage_table(SHORTS_STAGES, completed, current_stage, None, timings))
+            def _run(name, fn):
+                nonlocal cur
+                cur = name
+                live.update(_stage_table(SHORTS_STAGES, done, cur, None, times))
                 t0 = time.monotonic()
                 fn()
-                elapsed = time.monotonic() - t0
-                completed.add(name)
-                timings[name] = elapsed
-                live.update(_build_stage_table(SHORTS_STAGES, completed, None, None, timings))
+                done.add(name)
+                times[name] = time.monotonic() - t0
+                live.update(_stage_table(SHORTS_STAGES, done, None, None, times))
 
-            # ── 1. Generate bold text overlay phrases ────────────────────
-            def do_text_gen():
-                nonlocal text_phrases, title_text
-                text_phrases = _generate_overlay_text(
-                    topic, num_clips, engine, settings,
-                )
-                if text_phrases:
-                    title_text = text_phrases[0]
-                (work_dir / "text_overlays.json").write_text(
-                    json.dumps(text_phrases, indent=2), encoding="utf-8",
-                )
-
-            _run("text_generation", do_text_gen)
-
-            # ── 2. Select clips from library ─────────────────────────────
+            # ── 1. Select clips (prefer clips WITH audio) ────────────────
             def do_select():
                 nonlocal clip_paths
                 if clips_source == "library":
-                    from ytauto.services.clips import select_clips_for_sections
-                    dummy_sections = [{"narration": ""} for _ in range(num_clips)]
-                    clip_paths = select_clips_for_sections(dummy_sections, tag=clip_tag)
+                    from ytauto.services.clips import get_clips_dir, list_clips
+                    all_clips = list_clips(tag=clip_tag)
+                    if not all_clips:
+                        raise RuntimeError("No clips in library. Run: ytauto clips-rip <url>")
+
+                    clips_dir = get_clips_dir()
+                    # Filter to clips that have audio
+                    with_audio = []
+                    for c in all_clips:
+                        p = clips_dir / c["file"]
+                        if not p.exists():
+                            continue
+                        probe = subprocess.run(
+                            ["ffprobe", "-v", "error", "-select_streams", "a",
+                             "-show_entries", "stream=codec_name", "-of", "csv=p=0", str(p)],
+                            capture_output=True, text=True,
+                        )
+                        if probe.stdout.strip():
+                            with_audio.append(p)
+                    if not with_audio:
+                        raise RuntimeError(
+                            "No clips with audio found. Re-rip with: "
+                            "ytauto clips-rip <url> --keep-audio --tags suits"
+                        )
+                    random.shuffle(with_audio)
+                    clip_paths = [with_audio[i % len(with_audio)] for i in range(num_clips)]
                 else:
                     folder = Path(clips_source).expanduser().resolve()
-                    if not folder.is_dir():
-                        raise RuntimeError(f"Folder not found: {clips_source}")
-                    video_exts = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
-                    all_vids = [f for f in folder.iterdir() if f.suffix.lower() in video_exts]
-                    if not all_vids:
-                        raise RuntimeError(f"No videos in {clips_source}")
-                    random.shuffle(all_vids)
-                    clip_paths = [all_vids[i % len(all_vids)] for i in range(num_clips)]
+                    exts = {".mp4", ".mov", ".mkv", ".webm"}
+                    vids = [f for f in folder.iterdir() if f.suffix.lower() in exts]
+                    random.shuffle(vids)
+                    clip_paths = [vids[i % len(vids)] for i in range(num_clips)]
 
             _run("select_clips", do_select)
 
-            # ── 3. Crop to 9:16 + concat WITH ORIGINAL AUDIO ────────────
-            def do_crop():
+            # ── 2. Scale to 9:16 + concat WITH audio ────────────────────
+            def do_assemble():
                 nonlocal final_path
-                from ytauto.video.crop import crop_to_vertical, get_video_duration
 
-                if not clip_paths:
-                    raise RuntimeError("No clips selected.")
+                target_per = seconds / len(clip_paths)
+                scaled: list[Path] = []
 
-                target_per_clip = seconds / len(clip_paths)
-
-                cropped: list[Path] = []
                 for i, clip in enumerate(clip_paths):
-                    out = work_dir / f"_cropped_{i:03d}.mp4"
-                    clip_dur = get_video_duration(clip)
-                    trim_dur = min(target_per_clip, clip_dur)
-                    # Crop to vertical but KEEP AUDIO
-                    _crop_with_audio(clip, out, trim_dur)
-                    cropped.append(out)
+                    out = work_dir / f"_sc_{i:03d}.mp4"
+                    dur = _get_dur(clip)
+                    trim = min(target_per, dur)
+                    # Scale to FIT inside 1080x1920 (letterbox, don't crop)
+                    _scale_to_vertical(clip, out, trim)
+                    scaled.append(out)
 
-                # Concat all clips with audio
-                concat_file = work_dir / "_concat.txt"
-                concat_file.write_text(
-                    "\n".join(f"file '{p}'" for p in cropped), encoding="utf-8",
-                )
-
+                # Concat — re-encode both streams to guarantee compatibility
+                cf = work_dir / "_list.txt"
+                cf.write_text("\n".join(f"file '{p}'" for p in scaled), encoding="utf-8")
                 joined = work_dir / "_joined.mp4"
-                subprocess.run([
-                    "ffmpeg", "-y",
-                    "-f", "concat", "-safe", "0",
-                    "-i", str(concat_file),
+                r = subprocess.run([
+                    "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(cf),
                     "-c:v", "libx264", "-crf", "18", "-preset", "medium",
-                    "-pix_fmt", "yuv420p",
-                    "-c:a", "aac", "-b:a", "192k",
+                    "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
+                    "-shortest",
                     str(joined),
-                ], capture_output=True, check=True)
+                ], capture_output=True, text=True)
+                if r.returncode != 0:
+                    raise RuntimeError(f"Concat failed: {r.stderr[-400:]}")
 
                 final_path = joined
-
-                for f in cropped:
+                for f in scaled:
                     f.unlink(missing_ok=True)
-                concat_file.unlink(missing_ok=True)
+                cf.unlink(missing_ok=True)
 
-            _run("crop_and_assemble", do_crop)
+            _run("assemble", do_assemble)
 
-            # ── 4. Burn bold text overlays using Pillow ──────────────────
+            # ── 3. Transcribe the actual audio with Whisper ──────────────
+            def do_transcribe():
+                nonlocal word_ts
+                # Extract audio from the assembled video
+                audio_tmp = work_dir / "_audio.mp3"
+                r = subprocess.run([
+                    "ffmpeg", "-y", "-i", str(final_path),
+                    "-vn", "-c:a", "libmp3lame", "-b:a", "128k",
+                    str(audio_tmp),
+                ], capture_output=True, text=True)
+
+                if r.returncode != 0 or not audio_tmp.exists():
+                    # No audio track — skip transcription
+                    return
+
+                # Whisper via OpenAI API
+                import openai
+                if settings.has_openai():
+                    client = openai.OpenAI(api_key=settings.openai_api_key.get_secret_value())
+                    with open(audio_tmp, "rb") as f:
+                        transcript = client.audio.transcriptions.create(
+                            model="whisper-1",
+                            file=f,
+                            response_format="verbose_json",
+                            timestamp_granularities=["word"],
+                        )
+                    for w in getattr(transcript, "words", []):
+                        word_ts.append({"word": w.word.strip(), "start": w.start, "end": w.end})
+
+                (work_dir / "word_timestamps.json").write_text(
+                    json.dumps(word_ts, indent=2), encoding="utf-8",
+                )
+                audio_tmp.unlink(missing_ok=True)
+
+            _run("transcribe", do_transcribe)
+
+            # ── 4. Burn captions (what's being said) ─────────────────────
             def do_burn():
                 nonlocal final_path
-                if not text_phrases or not final_path:
+                if not word_ts or not final_path:
                     return
 
                 from ytauto.video.pillow_captions import burn_pillow_captions
-
-                # Convert text phrases into word timestamps format
-                # Each phrase gets shown for one clip's duration
-                dur = _get_duration(final_path)
-                phrase_dur = dur / len(text_phrases)
-
-                word_ts: list[dict] = []
-                for i, phrase in enumerate(text_phrases):
-                    start = i * phrase_dur
-                    words = phrase.split()
-                    word_dur = phrase_dur / max(len(words), 1)
-                    for j, word in enumerate(words):
-                        word_ts.append({
-                            "word": word,
-                            "start": start + j * word_dur,
-                            "end": start + (j + 1) * word_dur,
-                        })
-
-                output = work_dir / "_with_text.mp4"
+                output = work_dir / "_captioned.mp4"
                 burn_pillow_captions(
                     video_path=final_path,
                     word_timestamps=word_ts,
@@ -304,21 +254,19 @@ def shorts(
                     width=1080, height=1920, fps=30,
                     style=captions_style,
                 )
-
                 final_path.unlink(missing_ok=True)
                 final_path = output
 
-            _run("burn_text", do_burn)
+            _run("burn_captions", do_burn)
 
-            # ── 5. Finalize ──────────────────────────────────────────────
+            # ── 5. Done ──────────────────────────────────────────────────
             def do_done():
                 nonlocal final_path
-                title_slug = topic.replace(" ", "_")[:40]
-                dest = work_dir / f"{title_slug}_short.mp4"
+                slug = topic.replace(" ", "_")[:40]
+                dest = work_dir / f"{slug}_short.mp4"
                 if final_path and final_path.exists() and final_path != dest:
                     shutil.move(str(final_path), str(dest))
                     final_path = dest
-
                 job.video_path = str(final_path) if final_path else ""
                 job.status = "completed"
                 job.touch()
@@ -327,37 +275,32 @@ def shorts(
             _run("done", do_done)
 
     except Exception as exc:
-        console.print(_build_stage_table(SHORTS_STAGES, completed, None, current_stage, timings))
+        console.print(_stage_table(SHORTS_STAGES, done, None, cur, times))
         console.print()
-        error(f"Shorts pipeline failed: {exc}")
-        console.print(f"\n  [dim]Job ID: {job.id}[/dim]\n")
+        error(f"Failed: {exc}")
+        console.print(f"\n  [dim]Job: {job.id}[/dim]\n")
         raise typer.Exit(1)
 
-    # Result panel
-    rows: list[tuple[str, str]] = [
+    rows = [
         ("Job ID", f"[id]{job.id}[/id]"),
-        ("Title", f"[bold bright_white]{title_text}[/bold bright_white]"),
         ("Format", "9:16 Vertical (1080x1920)"),
-        ("Audio", "Original show audio (no AI voiceover)"),
-        ("Source", source_label),
+        ("Audio", "Original show audio"),
+        ("Captions", f"Whisper transcription \u2192 {captions_style} style"),
+        ("Source", src_label),
     ]
-
     if final_path and final_path.exists():
-        size_mb = final_path.stat().st_size / (1024 * 1024)
+        sz = final_path.stat().st_size / (1024 * 1024)
         rows.append(("Video", f"[path]{final_path}[/path]"))
-        rows.append(("Size", f"{size_mb:.1f} MB"))
-        dur = _get_duration(final_path)
-        rows.append(("Duration", f"{int(dur)}s"))
-
-    rows.append(("Clips", f"{len(clip_paths)}"))
-    rows.append(("Text Style", captions_style))
-    rows.append(("Total Time", f"{sum(timings.values()):.0f}s"))
+        rows.append(("Size", f"{sz:.1f} MB"))
+        rows.append(("Duration", f"{int(_get_dur(final_path))}s"))
+    rows.append(("Clips", str(len(clip_paths))))
+    rows.append(("Words", str(len(word_ts))))
+    rows.append(("Pipeline", f"{sum(times.values()):.0f}s"))
 
     console.print()
     console.print(result_panel("Short Created", rows))
     console.print()
     success("Your YouTube Short is ready!")
-    console.print(f"  [dim]View:[/dim]   [accent]ytauto job {job.id}[/accent]")
     console.print(f"  [dim]Open:[/dim]   [accent]ytauto open {job.id}[/accent]")
     console.print(f"  [dim]Upload:[/dim] [accent]ytauto upload {job.id}[/accent]\n")
 
@@ -367,138 +310,36 @@ def shorts(
             subprocess.Popen(["open", str(final_path)])
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+def _scale_to_vertical(inp: Path, out: Path, duration: float) -> Path:
+    """Scale video to fit 1080x1920 (9:16) without cropping.
 
-
-def _generate_overlay_text(
-    topic: str,
-    num_phrases: int,
-    engine: str,
-    settings,
-) -> list[str]:
-    """Generate bold text overlay phrases using AI."""
-    from ytauto.services.retry import retry
-    import anthropic
-    import openai
-
-    prompt = (
-        f"Generate exactly {num_phrases} bold motivational text overlay phrases "
-        f"for a YouTube Short about: {topic}\n\n"
-        f"Each phrase should be 3-7 words, punchy, uppercase-worthy, "
-        f"like what you'd see on Infinite Wealth Lab or motivation channels.\n\n"
-        f"Return ONLY a JSON array of strings, nothing else. Example:\n"
-        f'["WINNERS NEVER QUIT", "OUTWORK EVERYONE", "NO EXCUSES"]'
-    )
-
-    try:
-        if engine == "claude" and settings.has_anthropic():
-            client = anthropic.Anthropic(api_key=settings.anthropic_api_key.get_secret_value())
-            msg = client.messages.create(
-                model="claude-sonnet-4-20250514",
-                max_tokens=512,
-                messages=[{"role": "user", "content": prompt}],
-            )
-            raw = msg.content[0].text.strip()
-        elif settings.has_openai():
-            client = openai.OpenAI(api_key=settings.openai_api_key.get_secret_value())
-            resp = client.chat.completions.create(
-                model="gpt-4o",
-                response_format={"type": "json_object"},
-                messages=[{"role": "user", "content": prompt + "\nReturn as {\"phrases\": [...]}"}],
-                max_tokens=512,
-            )
-            raw = resp.choices[0].message.content.strip()
-        else:
-            # Fallback: generate from topic
-            words = topic.upper().split()
-            return [" ".join(words[i:i+4]) for i in range(0, len(words), 4)][:num_phrases]
-
-        # Parse JSON
-        import re
-        try:
-            data = json.loads(raw)
-            if isinstance(data, list):
-                return [str(p) for p in data][:num_phrases]
-            if isinstance(data, dict) and "phrases" in data:
-                return [str(p) for p in data["phrases"]][:num_phrases]
-        except json.JSONDecodeError:
-            match = re.search(r"\[.*\]", raw, re.DOTALL)
-            if match:
-                return [str(p) for p in json.loads(match.group())][:num_phrases]
-
-    except Exception as exc:
-        logger_msg = f"Text generation failed: {exc}"
-
-    # Fallback
-    return [topic.upper()]
-
-
-def _crop_with_audio(
-    input_path: Path,
-    output_path: Path,
-    duration: float,
-    target_width: int = 1080,
-    target_height: int = 1920,
-) -> Path:
-    """Center-crop a video to 9:16 vertical, keeping the audio track."""
-    # Get input dimensions
-    probe = subprocess.run(
-        [
-            "ffprobe", "-v", "error",
-            "-select_streams", "v:0",
-            "-show_entries", "stream=width,height",
-            "-of", "csv=p=0",
-            str(input_path),
-        ],
-        capture_output=True, text=True, check=True,
-    )
-    parts = probe.stdout.strip().split(",")
-    in_w, in_h = int(parts[0]), int(parts[1])
-
-    target_aspect = target_width / target_height
-    crop_w = int(in_h * target_aspect)
-    crop_h = in_h
-    crop_x = max(0, (in_w - crop_w) // 2)
-
-    if crop_w > in_w:
-        crop_w = in_w
-        crop_h = int(in_w / target_aspect)
-        crop_x = 0
-
+    Scales up to fill the frame, adds black bars only if aspect ratio
+    is too wide. Keeps original audio.
+    """
     vf = (
-        f"crop={crop_w}:{crop_h}:{crop_x}:0,"
-        f"scale={target_width}:{target_height}:force_original_aspect_ratio=decrease,"
-        f"pad={target_width}:{target_height}:(ow-iw)/2:(oh-ih)/2:black,"
-        f"setsar=1"
+        "scale=1080:1920:force_original_aspect_ratio=increase,"
+        "crop=1080:1920,"
+        "setsar=1"
     )
-
     cmd = [
-        "ffmpeg", "-y",
-        "-i", str(input_path),
+        "ffmpeg", "-y", "-i", str(inp),
         "-vf", vf,
         "-c:v", "libx264", "-crf", "20", "-preset", "fast",
         "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-b:a", "192k",
         "-t", str(duration),
-        str(output_path),
+        str(out),
     ]
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError(f"Scale failed: {r.stderr[-400:]}")
+    return out
 
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        raise RuntimeError(f"Crop failed: {result.stderr[-500:]}")
-    return output_path
 
-
-def _get_duration(path: Path) -> float:
-    result = subprocess.run(
-        [
-            "ffprobe", "-v", "error",
-            "-show_entries", "format=duration",
-            "-of", "default=noprint_wrappers=1:nokey=1",
-            str(path),
-        ],
+def _get_dur(p: Path) -> float:
+    r = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+         "-of", "default=noprint_wrappers=1:nokey=1", str(p)],
         capture_output=True, text=True, check=True,
     )
-    return float(result.stdout.strip())
+    return float(r.stdout.strip())
